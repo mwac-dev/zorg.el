@@ -248,9 +248,12 @@ If none exist, create the first one."
 (defun zorg--setup-layout ()
   "Create the Zorg three-window layout safely."
   (let* ((total (frame-width))
-         ;; use ratios (defaults: 20% left, 20% right, rest center)
-         (left (max 20 (min zorg-side-window-width-left (floor (* total 0.2)))))
-         (right (max 20 (min zorg-side-window-width-right (floor (* total 0.2)))))
+         ;;on second thought maybe this was too limiting on some resolutions and monitors
+         ; use ratios (defaults: 20% left, 20% right, rest center)
+         ; (left (max 20 (min zorg-side-window-width-left (floor (* total 0.2)))))
+         ; (right (max 20 (min zorg-side-window-width-right (floor (* total 0.2)))))
+         (left (max 20 (min zorg-side-window-width-left)))
+         (right (max 20 (min zorg-side-window-width-right)))
          (main-buf (current-buffer))
          (main (selected-window)))
     (delete-other-windows)
@@ -267,7 +270,16 @@ If none exist, create the first one."
       (org-mode))
     ;; restore main buffer in center
     (select-window main)
-    (switch-to-buffer main-buf)))
+    (switch-to-buffer main-buf)
+    ;; After restoring layout, normalize and save actual widths
+    (when (and (window-live-p zorg--left-window)
+              (window-live-p zorg--right-window))
+      (setq zorg-side-window-width-left  (window-total-width zorg--left-window)
+            zorg-side-window-width-right (window-total-width zorg--right-window))
+      (customize-save-variable 'zorg-side-window-width-left  zorg-side-window-width-left)
+      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))
+
+    ))
 
 ;;;###autoload
 (defun zorg-mode ()
