@@ -49,22 +49,28 @@
   (make-directory (file-name-directory path) t))
 
 (defun zorg--main-window ()
-  "Return the central main window when Zorg mode is active."
-  (car (seq-remove
-        (lambda (w)
-          (member (buffer-name (window-buffer w))
-                  '("*zorg-left*" "*zorg-right*")))
-        (window-list))))
+  "Return the central main window when Zorg mode is active.
+Prefer a window explicitly marked as the main window; otherwise,
+pick any live window that is not the recorded left/right window."
+  (or
+   ;; Prefer a window tagged as main
+   (car (seq-filter (lambda (w)
+                      (eq (window-parameter w 'zorg-role) 'main))
+                    (window-list)))
+   ;; Fallback: any window that isn't left or right
+   (car (seq-filter (lambda (w)
+                      (and (window-live-p w)
+                           (not (eq w zorg--left-window))
+                           (not (eq w zorg--right-window))))
+                    (window-list)))
+   ;; Last resort: the currently selected window
+   (selected-window)))
 
 (defun zorg--main-buffer ()
-  (let* ((wins (window-list))
-         (candidates (seq-remove
-                      (lambda (w)
-                        (member (buffer-name (window-buffer w))
-                                '("*zorg-left*" "*zorg-right*")))
-                      wins)))
-    (when candidates
-      (window-buffer (car candidates)))))
+  "Return the buffer displayed in the main (center) window."
+  (let ((w (zorg--main-window)))
+    (when (window-live-p w)
+      (window-buffer w))))
 
 (defun zorg--main-file ()
   (with-current-buffer (zorg--main-buffer)
@@ -106,7 +112,8 @@
            (note (expand-file-name (format "%s-%s.org" hash slug) real-dir)))
       (zorg--ensure-dir note)
       (find-file note)
-      (org-mode))))
+      (when(zorg--in-side-window-p)
+      (org-mode)))))
 
 (defun zorg-find-pair-note ()
   "Pick one of the paired notes for the current file."
@@ -126,34 +133,48 @@
           (find-file choice)))))))
 
 (defun zorg-note-pair ()
-  "Open paired note(s) for the current file.
-If only one exists, open it directly. If multiple, prompt.
-If none exist, create the first one."
+  "Open paired note(s) for the current main buffer file.
+
+- If in a side buffer: pretend the command was run in the main buffer,
+  but reuse that side window to show the note.
+- If in the main buffer: prompt for which side window to use.
+- If no notes exist: create the first one."
   (interactive)
-  (let ((target-file (zorg--main-file)))
-    (unless target-file
-      (user-error "No file open in the main buffer"))
-    (let* ((rel (file-relative-name target-file (zorg--project-root)))
-           (matches (zorg--pair-files rel))
-           (note (cond
-                  ((null matches)
-                   ;; create initial pair note
-                   (let* ((real-dir (expand-file-name "paired" (zorg--notes-path)))
-                          (real (expand-file-name (concat (md5 rel) ".org") real-dir)))
-                     (zorg--ensure-dir real)
-                     (with-temp-file real
-                       (insert (format "# Paired note for %s\n\n" rel)))
-                     real))
-                  ((= (length matches) 1) (car matches))
-                  (t (completing-read "Choose pair note: " matches nil t)))))
-      (pcase (zorg--in-side-window-p)
-        ('left (find-file note))
-        ('right (find-file note))
-        (_ (let ((win (zorg--select-side-window)))
-             (when (window-live-p win)
-               (with-selected-window win
-                 (find-file note))))))
-      (org-mode))))
+  (let* ((side (zorg--in-side-window-p))
+         (main-buf (zorg--main-buffer)))
+    (unless main-buf
+      (user-error "No main window/buffer found"))
+    (let ((target-file (with-current-buffer main-buf buffer-file-name)))
+      (unless target-file
+        (user-error "No file open in the main buffer"))
+      (let* ((rel (file-relative-name target-file (zorg--project-root)))
+             (matches (zorg--pair-files rel))
+             (note
+              (cond
+               ((null matches)
+                (let* ((real-dir (expand-file-name "paired" (zorg--notes-path)))
+                       (real (expand-file-name (concat (md5 rel) ".org") real-dir)))
+                  (zorg--ensure-dir real)
+                  (with-temp-file real
+                    (insert (format "# Paired note for %s\n\n" rel)))
+                  real))
+               ((= (length matches) 1)
+                (car matches))
+               (t
+                (completing-read "Choose pair note: " matches nil t)))))
+        (cond
+         ;; Already in side window → reuse that one
+         (side
+          (find-file note))
+         ;; In main buffer → ask which side to use
+         (t
+          (let ((win (zorg--select-side-window)))
+            (if (window-live-p win)
+                (with-selected-window win
+                  (find-file note))
+              (user-error "Side window is not live")))))
+        (when (zorg--in-side-window-p)
+  (org-mode))))))
 
 ;; -----------------------------
 ;; Loose notes
@@ -172,7 +193,8 @@ If none exist, create the first one."
       (_ (let ((win (zorg--select-side-window)))
            (with-selected-window win
              (find-file note)))))
-    (org-mode)))
+    (when (zorg--in-side-window-p)
+  (org-mode))))
 
 ;; -----------------------------
 ;; Views
@@ -182,7 +204,8 @@ If none exist, create the first one."
   (when files
     (let ((choice (completing-read prompt files nil t)))
       (find-file choice)
-      (org-mode))))
+      (when (zorg--in-side-window-p)
+  (org-mode)))))
 
 (defun zorg-find-project-notes ()
   "Pick from all notes in the project."
@@ -248,12 +271,8 @@ If none exist, create the first one."
 (defun zorg--setup-layout ()
   "Create the Zorg three-window layout safely."
   (let* ((total (frame-width))
-         ;;on second thought maybe this was too limiting on some resolutions and monitors
-         ; use ratios (defaults: 20% left, 20% right, rest center)
-         ; (left (max 20 (min zorg-side-window-width-left (floor (* total 0.2)))))
-         ; (right (max 20 (min zorg-side-window-width-right (floor (* total 0.2)))))
-         (left (max 20 (min zorg-side-window-width-left)))
-         (right (max 20 (min zorg-side-window-width-right)))
+         (left (max 20 zorg-side-window-width-left))
+         (right (max 20 zorg-side-window-width-right))
          (main-buf (current-buffer))
          (main (selected-window)))
     (delete-other-windows)
@@ -261,25 +280,32 @@ If none exist, create the first one."
     (setq zorg--left-window (split-window main left 'left))
     (with-selected-window zorg--left-window
       (switch-to-buffer (get-buffer-create "*zorg-left*"))
-      (org-mode))
+      (when (zorg--in-side-window-p)
+  (org-mode)))
     ;; back to main before right split
     (select-window main)
     (setq zorg--right-window (split-window main (- right) 'right))
     (with-selected-window zorg--right-window
       (switch-to-buffer (get-buffer-create "*zorg-right*"))
-      (org-mode))
+      (when (zorg--in-side-window-p)
+  (org-mode)))
+
+    ;; ---> Tag window roles so we can find them reliably later
+    (set-window-parameter zorg--left-window  'zorg-role 'left)
+    (set-window-parameter main               'zorg-role 'main)
+    (set-window-parameter zorg--right-window 'zorg-role 'right)
+
     ;; restore main buffer in center
     (select-window main)
     (switch-to-buffer main-buf)
-    ;; After restoring layout, normalize and save actual widths
+
+    ;; normalize/save actual widths
     (when (and (window-live-p zorg--left-window)
-              (window-live-p zorg--right-window))
+               (window-live-p zorg--right-window))
       (setq zorg-side-window-width-left  (window-total-width zorg--left-window)
             zorg-side-window-width-right (window-total-width zorg--right-window))
       (customize-save-variable 'zorg-side-window-width-left  zorg-side-window-width-left)
-      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))
-
-    ))
+      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))))
 
 ;;;###autoload
 (defun zorg-mode ()
@@ -308,7 +334,8 @@ If none exist, create the first one."
                                             'left))
       (with-selected-window zorg--left-window
         (switch-to-buffer (get-buffer-create "*zorg-left*"))
-        (org-mode))
+        (when (zorg--in-side-window-p)
+  (org-mode)))
       ;; right panel
       (let ((center (selected-window)))
         (setq zorg--right-window (split-window center
@@ -316,7 +343,8 @@ If none exist, create the first one."
                                                'right))
         (with-selected-window zorg--right-window
           (switch-to-buffer (get-buffer-create "*zorg-right*"))
-          (org-mode))
+          (when (zorg--in-side-window-p)
+  (org-mode)))
         ;; restore main buffer in center
         (with-selected-window center
           (switch-to-buffer main-buf))))
