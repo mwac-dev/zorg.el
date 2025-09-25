@@ -118,9 +118,8 @@ pick any live window that is not the recorded left/right window."
       (user-error "No file open in the main buffer"))
     (let* ((dir (file-name-directory main-file))
            (note (zorg--make-dir-note dir title)))
-      (find-file note)
-      (when (zorg--in-side-window-p)
-        (org-mode)))))
+      (zorg--open-note-in-side note))))
+
 (defun zorg-dir-note ()
   "Open or create a note scoped to the current buffer’s directory."
   (interactive)
@@ -143,21 +142,31 @@ pick any live window that is not the recorded left/right window."
                                            matches))
                           (choice (completing-read "Choose directory note: " (mapcar #'car choices) nil t)))
                      (cdr (assoc choice choices)))))))
-      (let ((win (or (zorg--in-side-window-p) (zorg--select-side-window))))
-        (with-selected-window (if (windowp win) win (selected-window))
-          (find-file note)
-          (org-mode))))))
+      (zorg--open-note-in-side note))))
 
 ;; -----------------------------
 ;; Paired notes
 ;; -----------------------------
 
 (defun zorg--pair-files (rel)
-  "Return list of real pair notes for REL (file-relative path)."
+  "Return list of pair notes for REL, following alias indirections."
   (let* ((real-dir (expand-file-name "paired" (zorg--notes-path)))
-         (hash (md5 rel)))
+         (hash (md5 rel))
+         (base (expand-file-name hash real-dir)))
     (when (file-directory-p real-dir)
-      (directory-files real-dir t (concat "^" hash)))))
+      (let ((matches (directory-files real-dir t (concat "^" hash))))
+        (if matches
+            ;; If it’s an alias, resolve to stored path
+            (mapcan (lambda (f)
+                      (if (string-suffix-p ".alias" f)
+                          (let ((target (string-trim (with-temp-buffer
+                                                       (insert-file-contents f)
+                                                       (buffer-string)))))
+                            (when (file-exists-p target)
+                              (list target)))
+                        (list f)))
+                    matches)
+          nil)))))
 
 
 (defun zorg--make-pair-note (rel title)
@@ -181,9 +190,40 @@ Returns the path to the created note."
       (user-error "No file open in the main buffer"))
     (let* ((rel (file-relative-name target-file (zorg--project-root)))
            (note (zorg--make-pair-note rel title)))
-      (find-file note)
-      (when (zorg--in-side-window-p)
-        (org-mode)))))
+      (zorg--open-note-in-side note))))
+
+(defun zorg-set-pair-to-existing-note ()
+  "Associate the current main buffer file with an existing pair note.
+
+Prompts for an existing note under `.zorg-notes/paired/` and records
+an alias hash file so that this file will now resolve to the chosen note.
+Multiple files can point to the same note."
+  (interactive)
+  (let ((target-file (zorg--main-file)))
+    (unless target-file
+      (user-error "No file open in the main buffer"))
+    (let* ((real-dir (expand-file-name "paired" (zorg--notes-path)))
+           (all-notes (when (file-directory-p real-dir)
+                        (directory-files real-dir t "\\.org$"))))
+      (unless all-notes
+        (user-error "No existing pair notes to choose from"))
+      (let* ((choices (mapcar (lambda (f)
+                                (cons (zorg--note-title f) f))
+                              all-notes))
+             (choice (completing-read "Associate with note: "
+                                      (mapcar #'car choices) nil t))
+             (note (cdr (assoc choice choices)))
+             ;; compute alias name using this file’s hash
+             (rel (file-relative-name target-file (zorg--project-root)))
+             (alias (expand-file-name
+                     (format "%s.alias"
+                             (md5 rel))
+                     real-dir)))
+        ;; Write the path of the real note into the alias file
+        (with-temp-file alias
+          (insert note))
+        (message "Associated %s with %s" rel note)))))
+
 
 (defun zorg--note-title (file)
   "Extract the human-readable title (slug) from a pair FILE name."
@@ -211,7 +251,6 @@ intended for personal/global notes you want available everywhere."
   (interactive)
   (let* ((dir (zorg--notes-path))
          (files (when (file-directory-p dir)
-                  ;; Only notes in root of .zorg-notes, not paired
                   (directory-files dir t "\\.org$"))))
     (if files
         (zorg--choose-note-from files "Loose note: ")
@@ -246,15 +285,15 @@ intended for personal/global notes you want available everywhere."
            (matches (zorg--pair-files rel)))
       (cond
        ((null matches)
-        (message "No pair notes yet, use `zorg-create-new-pair-note`."))
+        (message "No pair notes yet for this source file, use `zorg-create-new-pair-note`."))
        ((= (length matches) 1)
-        (find-file (car matches)))
+        (zorg--open-note-in-side (car matches)))
        (t
         (let* ((choices (mapcar (lambda (f)
                                   (cons (zorg--note-title f) f))
                                 matches))
-               (choice (completing-read "Choose pair note: " choices nil t)))
-          (find-file (cdr (assoc choice choices)))))))))
+               (choice (completing-read "Choose pair note: " (mapcar #'car choices) nil t)))
+          (zorg--open-note-in-side (cdr (assoc choice choices)))))))))
 
 (defun zorg-pair-note()
   "Open paired note(s) for the current main buffer file.
@@ -311,29 +350,37 @@ intended for personal/global notes you want available everywhere."
   "Create a loose note for this project."
   (interactive "sLoose note title: ")
   (let* ((slug (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" title))
-         ;; used to add a loose- prefix but seems redundant - might revisit if theres any good reason
          (note (expand-file-name (concat slug ".org")
                                  (zorg--notes-path))))
     (zorg--ensure-dir note)
-    (pcase (zorg--in-side-window-p)
-      ('left (find-file note))
-      ('right (find-file note))
-      (_ (let ((win (zorg--select-side-window)))
-           (with-selected-window win
-             (find-file note)))))
-    (when (zorg--in-side-window-p)
-  (org-mode))))
-
+    (zorg--open-note-in-side note)))
 ;; -----------------------------
 ;; Views
 ;; -----------------------------
 
+
+(defun zorg--open-note-in-side (file)
+  "Open FILE in the appropriate side window.
+If called from a side window, reuse it. Otherwise prompt left/right."
+  (let ((side (zorg--in-side-window-p)))
+    (cond
+     ;; Already in a side window → just open here
+     (side
+      (find-file file)
+      (org-mode))
+     ;; From main window → prompt for side
+     (t
+      (let ((win (zorg--select-side-window)))
+        (if (window-live-p win)
+            (with-selected-window win
+              (find-file file)
+              (org-mode))
+          (user-error "Side window is not live")))))))
+
 (defun zorg--choose-note-from (files prompt)
   (when files
     (let ((choice (completing-read prompt files nil t)))
-      (find-file choice)
-      (when (zorg--in-side-window-p)
-  (org-mode)))))
+      (zorg--open-note-in-side choice))))
 
 (defun zorg-find-project-notes ()
   "Pick from all notes in the project."
@@ -362,15 +409,7 @@ intended for personal/global notes you want available everywhere."
                    files))
       (if files
           (let ((choice (completing-read "Directory note: " files nil t)))
-            (cond
-             ((zorg--in-side-window-p)
-              (find-file choice)
-              (org-mode))
-             (t
-              (let ((win (zorg--select-side-window)))
-                (with-selected-window win
-                  (find-file choice)
-                  (org-mode))))))
+            (zorg--open-note-in-side choice))
         (message "No notes found for this directory.")))))
 
 (defun zorg-find-directory-notes-recursive ()
@@ -389,15 +428,7 @@ intended for personal/global notes you want available everywhere."
                    files))
       (if files
           (let ((choice (completing-read "Directory (recursive) note: " files nil t)))
-            (cond
-             ((zorg--in-side-window-p)
-              (find-file choice)
-              (org-mode))
-             (t
-              (let ((win (zorg--select-side-window)))
-                (with-selected-window win
-                  (find-file choice)
-                  (org-mode))))))
+            (zorg--open-note-in-side choice))
         (message "No notes found for this directory (recursive).")))))
 
 ;; -----------------------------
