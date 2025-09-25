@@ -517,8 +517,17 @@ intended for personal/global notes you want available everywhere."
 
 
 (defun zorg--maybe-restore-layout (&rest _)
-  "If Zorg mode is active, restore its layout after switching projects/workspaces/tabs."
+  "If Zorg mode is active, restore its layout after switching projects/workspaces/tabs.
+Capture real side widths first so they don’t drift."
   (when zorg--active-p
+    ;; If side windows are live, capture actual widths
+    (when (and (window-live-p zorg--left-window)
+               (window-live-p zorg--right-window))
+      (setq zorg-side-window-width-left  (window-total-width zorg--left-window)
+            zorg-side-window-width-right (window-total-width zorg--right-window))
+      (customize-save-variable 'zorg-side-window-width-left  zorg-side-window-width-left)
+      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))
+    ;; Then restore layout
     (zorg--setup-layout)))
 
 ;; Doom workspaces (persp-mode)
