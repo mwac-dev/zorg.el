@@ -420,54 +420,19 @@ intended for personal/global notes you want available everywhere."
   "Width in columns of the right Zorg panel. 0 means disabled."
   :type 'integer
   :group 'zorg)
-
-(defun zorg-reset-window-widths ()
-  "Set both side panels to 40 columns and keep the main window absorbing the rest.
-If a side panel is hidden, create it at 40. No full layout rebuild."
+(defun zorg-reset-custom-layout ()
+  "Reset Zorg windows to my preferred widths."
   (interactive)
-  ;; Persisted targets + defaults for future toggles
-  (setq zorg--saved-left-width  40
-        zorg--saved-right-width 40
-        zorg-width-left         40
-        zorg-width-right        40)
-
-  (if (not zorg--active-p)
-      (progn
-        (zorg-save-widths)
-        (message "Zorg widths set for next activation: L=40, R=40"))
-    (let* ((center   (zorg--main-window))
-           (main-buf (zorg--main-buffer)))
-      ;; --- LEFT: create or resize to 40
-      (if (window-live-p zorg--left-window)
-          (window-resize zorg--left-window
-                         (- 40 (window-total-width zorg--left-window))
-                         t) ;; horizontal
-        (setq zorg--left-window (split-window center 40 'left))
-        (with-selected-window zorg--left-window
-          (switch-to-buffer (get-buffer-create "*zorg-left*"))
-          (org-mode))
-        (set-window-parameter zorg--left-window 'zorg-role 'left))
-
-      ;; --- RIGHT: create or resize to 40
-      (if (window-live-p zorg--right-window)
-          (window-resize zorg--right-window
-                         (- 40 (window-total-width zorg--right-window))
-                         t) ;; horizontal
-        (setq zorg--right-window (split-window center 40 'right))
-        (with-selected-window zorg--right-window
-          (switch-to-buffer (get-buffer-create "*zorg-right*"))
-          (org-mode))
-        (set-window-parameter zorg--right-window 'zorg-role 'right))
-
-      ;; Restore focus/content to main (center) window
-      (when (window-live-p center)
-        (with-selected-window center
-          (when (buffer-live-p main-buf)
-            (switch-to-buffer main-buf))))
-
-      ;; Persist to custom vars for next time
-      (zorg-save-widths)
-      (message "Zorg widths reset: L=40, R=40"))))
+  ;; overwrite the saved + current widths
+  (setq zorg-width-left  44
+        zorg-width-main  199
+        zorg-width-right 40
+        zorg--saved-left-width  44
+        zorg--saved-right-width 40)
+  ;; if active, rebuild right away
+  (if zorg--active-p
+      (zorg--setup-layout)
+    (message "Zorg custom widths set for next activation: L=44, M=199, R=40")))
 
 
 (defun zorg--capture-widths ()
