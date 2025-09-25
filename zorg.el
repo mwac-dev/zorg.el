@@ -404,80 +404,98 @@ intended for personal/global notes you want available everywhere."
 ;; Zorg layout
 ;; -----------------------------
 
-(defcustom zorg-side-window-width-left 40
-  "Width of the left Zorg side panel in columns."
+
+
+(defcustom zorg-width-left 40
+  "Width in columns of the left Zorg panel. 0 means disabled."
   :type 'integer
   :group 'zorg)
 
-(defcustom zorg-side-window-width-right 40
-  "Width of the right Zorg side panel in columns."
+(defcustom zorg-width-main 80
+  "Width in columns of the main Zorg buffer."
   :type 'integer
   :group 'zorg)
 
-(defun zorg-save-side-window-widths ()
-  "Save Zorg side widths to custom-file for persistence."
+(defcustom zorg-width-right 40
+  "Width in columns of the right Zorg panel. 0 means disabled."
+  :type 'integer
+  :group 'zorg)
+
+(defun zorg--capture-widths ()
+  "Save real current widths into `zorg-width-*` variables."
+  (when zorg--active-p
+    (let ((total (frame-width)))
+      (setq zorg-width-left
+            (if (window-live-p zorg--left-window)
+                (window-total-width zorg--left-window) 0))
+      (setq zorg-width-right
+            (if (window-live-p zorg--right-window)
+                (window-total-width zorg--right-window) 0))
+      (setq zorg-width-main
+            (- total zorg-width-left zorg-width-right)))))
+
+
+(defun zorg-save-widths ()
   (interactive)
-  (when (window-live-p zorg--left-window)
-    (customize-save-variable
-     'zorg-side-window-width-left
-     (window-total-width zorg--left-window)))
-  (when (window-live-p zorg--right-window)
-    (customize-save-variable
-     'zorg-side-window-width-right
-     (window-total-width zorg--right-window)))
-  (message "Saved Zorg widths: left=%d, right=%d"
-           zorg-side-window-width-left
-           zorg-side-window-width-right))
+  (zorg--capture-widths)
+  (customize-save-variable 'zorg-width-left zorg-width-left)
+  (customize-save-variable 'zorg-width-main zorg-width-main)
+  (customize-save-variable 'zorg-width-right zorg-width-right)
+  (message "Saved Zorg widths: L=%d, M=%d, R=%d"
+           zorg-width-left zorg-width-main zorg-width-right))
 
-(add-hook 'kill-emacs-hook #'zorg-save-side-window-widths)
+(add-hook 'kill-emacs-hook #'zorg-save-widths)
 
 (defun zorg--setup-layout ()
-  "Create the Zorg three-window layout safely."
-  (let* ((total (frame-width))
-         (left (max 20 zorg-side-window-width-left))
-         (right (max 20 zorg-side-window-width-right))
-         (main-buf (current-buffer))
-         (main (selected-window)))
+  "Recreate Zorg layout with exact `zorg-width-*` widths."
+  (let ((main-buf (current-buffer)))
     (delete-other-windows)
-    ;; left panel
-    (setq zorg--left-window (split-window main left 'left))
-    (with-selected-window zorg--left-window
-      (switch-to-buffer (get-buffer-create "*zorg-left*"))
-      (when (zorg--in-side-window-p)
-  (org-mode)))
-    ;; back to main before right split
-    (select-window main)
-    (setq zorg--right-window (split-window main (- right) 'right))
-    (with-selected-window zorg--right-window
-      (switch-to-buffer (get-buffer-create "*zorg-right*"))
-      (when (zorg--in-side-window-p)
-  (org-mode)))
+    (let ((center (selected-window)))
+      (set-window-parameter center 'zorg-role 'main)
 
-    ;; ---> Tag window roles so we can find them reliably later
-    (set-window-parameter zorg--left-window  'zorg-role 'left)
-    (set-window-parameter main               'zorg-role 'main)
-    (set-window-parameter zorg--right-window 'zorg-role 'right)
+      ;; Always split LEFT first
+      (when (> zorg-width-left 0)
+        (setq zorg--left-window (split-window center zorg-width-left 'left))
+        (with-selected-window zorg--left-window
+          (switch-to-buffer (get-buffer-create "*zorg-left*"))
+          (org-mode))
+        (set-window-parameter zorg--left-window 'zorg-role 'left))
 
-    ;; restore main buffer in center
-    (select-window main)
-    (switch-to-buffer main-buf)
+      ;; Then split RIGHT from the (new) center
+      (when (> zorg-width-right 0)
+        (setq zorg--right-window (split-window center zorg-width-right 'right))
+        (with-selected-window zorg--right-window
+          (switch-to-buffer (get-buffer-create "*zorg-right*"))
+          (org-mode))
+        (set-window-parameter zorg--right-window 'zorg-role 'right))
 
-    ;; normalize/save actual widths
-    (when (and (window-live-p zorg--left-window)
-               (window-live-p zorg--right-window))
-      (setq zorg-side-window-width-left  (window-total-width zorg--left-window)
-            zorg-side-window-width-right (window-total-width zorg--right-window))
-      (customize-save-variable 'zorg-side-window-width-left  zorg-side-window-width-left)
-      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))))
+      ;; Restore main buffer
+      (with-selected-window center
+        (switch-to-buffer main-buf))
+
+      ;; Now force exact widths
+      (let ((total (frame-width)))
+        (when (window-live-p zorg--left-window)
+          (window-resize zorg--left-window
+                         (- zorg-width-left (window-total-width zorg--left-window))
+                         t))
+        (when (window-live-p zorg--right-window)
+          (window-resize zorg--right-window
+                         (- zorg-width-right (window-total-width zorg--right-window))
+                         t)))
+      ;; center auto-adjusts
+      (select-window center))))
+
 
 ;;;###autoload
 (defun zorg-mode ()
-  "Toggle Zorg mode: center buffer with side windows."
+  "Toggle Zorg mode: center buffer with side panels."
   (interactive)
   (if zorg--active-p
-      ;; --- turn off (patched: stay on whatever’s in the main buffer)
+      ;; --- turn off
       (progn
-        (zorg-save-side-window-widths)
+        ;; Save actual current widths so the *next* toggle uses them
+        (zorg-save-widths)
         (let ((main-buf (zorg--main-buffer)))
           (delete-other-windows)
           (when (buffer-live-p main-buf)
@@ -487,47 +505,16 @@ intended for personal/global notes you want available everywhere."
               zorg--left-window nil
               zorg--right-window nil)
         (message "Zorg mode off"))
-    ;; --- turn on (unchanged, keep your old width logic)
+    ;; --- turn on
     (setq zorg--saved-config (current-window-configuration)
           zorg--active-p t)
     (zorg--setup-layout)
-    (let ((main-buf (current-buffer)))
-      (delete-other-windows)
-      ;; left panel
-      (setq zorg--left-window (split-window (selected-window)
-                                            zorg-side-window-width-left
-                                            'left))
-      (with-selected-window zorg--left-window
-        (switch-to-buffer (get-buffer-create "*zorg-left*"))
-        (when (zorg--in-side-window-p)
-          (org-mode)))
-      ;; right panel
-      (let ((center (selected-window)))
-        (setq zorg--right-window (split-window center
-                                               (- zorg-side-window-width-right)
-                                               'right))
-        (with-selected-window zorg--right-window
-          (switch-to-buffer (get-buffer-create "*zorg-right*"))
-          (when (zorg--in-side-window-p)
-            (org-mode)))
-        ;; restore main buffer in center
-        (with-selected-window center
-          (switch-to-buffer main-buf))))
     (message "Zorg mode on")))
 
 
 (defun zorg--maybe-restore-layout (&rest _)
-  "If Zorg mode is active, restore its layout after switching projects/workspaces/tabs.
-Capture real side widths first so they don’t drift."
+  "If Zorg mode is active, restore its layout after project/workspace switch."
   (when zorg--active-p
-    ;; If side windows are live, capture actual widths
-    (when (and (window-live-p zorg--left-window)
-               (window-live-p zorg--right-window))
-      (setq zorg-side-window-width-left  (window-total-width zorg--left-window)
-            zorg-side-window-width-right (window-total-width zorg--right-window))
-      (customize-save-variable 'zorg-side-window-width-left  zorg-side-window-width-left)
-      (customize-save-variable 'zorg-side-window-width-right zorg-side-window-width-right))
-    ;; Then restore layout
     (zorg--setup-layout)))
 
 ;; Doom workspaces (persp-mode)
