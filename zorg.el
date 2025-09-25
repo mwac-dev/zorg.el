@@ -434,6 +434,53 @@ intended for personal/global notes you want available everywhere."
       (setq zorg-width-main
             (- total zorg-width-left zorg-width-right)))))
 
+(defvar zorg--saved-left-width 40
+  "Last non-zero width for the left panel, used when toggling it back on.")
+
+(defun zorg-toggle-left ()
+  "Toggle the left Zorg panel between hidden (0) and its saved width.
+When turning off, shrink only the left window so the main window expands.
+When turning on, restore the left width (default 40 if none saved)."
+  (interactive)
+  (if (zerop zorg-width-left)
+      ;; Turn ON
+      (setq zorg-width-left (if (> zorg--saved-left-width 0)
+                                zorg--saved-left-width
+                              40))
+    ;; Turn OFF
+    (setq zorg--saved-left-width zorg-width-left
+          zorg-width-left 0))
+  (when zorg--active-p
+    (zorg--setup-layout)
+    ;; --- Fix: force opposite side to keep its size
+    (when (window-live-p zorg--right-window)
+      (window-resize zorg--right-window
+                     (- zorg-width-right (window-total-width zorg--right-window))
+                     t))))
+
+(defvar zorg--saved-right-width 40
+  "Last non-zero width for the right panel, used when toggling it back on.")
+
+(defun zorg-toggle-right ()
+  "Toggle the right Zorg panel between hidden (0) and its saved width.
+When turning off, shrink only the right window so the main window expands.
+When turning on, restore the right width (default 40 if none saved)."
+  (interactive)
+  (if (zerop zorg-width-right)
+      ;; Turn ON
+      (setq zorg-width-right (if (> zorg--saved-right-width 0)
+                                 zorg--saved-right-width
+                               40))
+    ;; Turn OFF
+    (setq zorg--saved-right-width zorg-width-right
+          zorg-width-right 0))
+  (when zorg--active-p
+    (zorg--setup-layout)
+    ;; --- Fix: force opposite side to keep its size
+    (when (window-live-p zorg--left-window)
+      (window-resize zorg--left-window
+                     (- zorg-width-left (window-total-width zorg--left-window))
+                     t))))
 
 (defun zorg-save-widths ()
   (interactive)
@@ -516,18 +563,28 @@ intended for personal/global notes you want available everywhere."
   "If Zorg mode is active, restore its layout after project/workspace switch."
   (when zorg--active-p
     (zorg--setup-layout)))
+;; Adapter for hooks that pass args we don't care about.
+(defun zorg--save-widths-hook (&rest _)
+  (when zorg--active-p
+    (zorg-save-widths)))
 
+;;saving and then restoring on project switching
+;;might add project-specific layouts but for now its global
 ;; Doom workspaces (persp-mode)
 (with-eval-after-load 'persp-mode
-  (add-hook 'persp-activated-functions #'zorg--maybe-restore-layout))
+  (add-hook 'persp-before-switch-functions #'zorg--save-widths-hook)
+  (add-hook 'persp-activated-functions      #'zorg--maybe-restore-layout))
 
 ;; Projectile project switching
 (with-eval-after-load 'projectile
-  (add-hook 'projectile-after-switch-project-hook #'zorg--maybe-restore-layout))
+  (add-hook 'projectile-before-switch-project-hook #'zorg--save-widths-hook)
+  (add-hook 'projectile-after-switch-project-hook  #'zorg--maybe-restore-layout))
 
 ;; Vanilla Emacs tab-bar
 (with-eval-after-load 'tab-bar
-  (add-hook 'tab-bar-switch-hook #'zorg--maybe-restore-layout))
+  (add-hook 'tab-bar-tab-pre-close-functions #'zorg--save-widths-hook)
+  (add-hook 'tab-bar-switch-hook #'zorg--save-widths-hook)
+  (add-hook 'tab-bar-switch-hook             #'zorg--maybe-restore-layout))
 
 
 ;;-------------------
