@@ -475,17 +475,19 @@ intended for personal/global notes you want available everywhere."
   "Toggle Zorg mode: center buffer with side windows."
   (interactive)
   (if zorg--active-p
-      ;; --- turn off
+      ;; --- turn off (patched: stay on whatever’s in the main buffer)
       (progn
         (zorg-save-side-window-widths)
-        (when zorg--saved-config
-          (set-window-configuration zorg--saved-config))
+        (let ((main-buf (zorg--main-buffer)))
+          (delete-other-windows)
+          (when (buffer-live-p main-buf)
+            (switch-to-buffer main-buf)))
         (setq zorg--saved-config nil
               zorg--active-p nil
               zorg--left-window nil
               zorg--right-window nil)
         (message "Zorg mode off"))
-    ;; --- turn on
+    ;; --- turn on (unchanged, keep your old width logic)
     (setq zorg--saved-config (current-window-configuration)
           zorg--active-p t)
     (zorg--setup-layout)
@@ -498,7 +500,7 @@ intended for personal/global notes you want available everywhere."
       (with-selected-window zorg--left-window
         (switch-to-buffer (get-buffer-create "*zorg-left*"))
         (when (zorg--in-side-window-p)
-  (org-mode)))
+          (org-mode)))
       ;; right panel
       (let ((center (selected-window)))
         (setq zorg--right-window (split-window center
@@ -507,13 +509,29 @@ intended for personal/global notes you want available everywhere."
         (with-selected-window zorg--right-window
           (switch-to-buffer (get-buffer-create "*zorg-right*"))
           (when (zorg--in-side-window-p)
-  (org-mode)))
+            (org-mode)))
         ;; restore main buffer in center
         (with-selected-window center
           (switch-to-buffer main-buf))))
     (message "Zorg mode on")))
 
 
+(defun zorg--maybe-restore-layout (&rest _)
+  "If Zorg mode is active, restore its layout after switching projects/workspaces/tabs."
+  (when zorg--active-p
+    (zorg--setup-layout)))
+
+;; Doom workspaces (persp-mode)
+(with-eval-after-load 'persp-mode
+  (add-hook 'persp-activated-functions #'zorg--maybe-restore-layout))
+
+;; Projectile project switching
+(with-eval-after-load 'projectile
+  (add-hook 'projectile-after-switch-project-hook #'zorg--maybe-restore-layout))
+
+;; Vanilla Emacs tab-bar
+(with-eval-after-load 'tab-bar
+  (add-hook 'tab-bar-switch-hook #'zorg--maybe-restore-layout))
 
 
 ;;-------------------
