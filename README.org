@@ -88,9 +88,6 @@ Zorg provides two main ways to cross-reference:
   - From the main buffer → copies a deep link (file + line) to the kill ring.  
   - From a side buffer → inserts the link into the note *and* copies it.
 
-  Example:
-
-  [[zorgmain:/home/user/project/src/main.c::42][main.c:42]]
 
   These always reopen the file in the *main buffer* and scroll the target line to the top.
 
