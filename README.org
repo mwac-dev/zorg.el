@@ -100,9 +100,6 @@ Zorg provides two main ways to cross-reference:
   - Uses the human-readable slug for the label.  
   - Always reopens in the *same side window*.
 
-  Example:
-
-  [[file:/home/user/project/.zorg-notes/paired/abcd1234-DesignIdeas.org][DesignIdeas]]
 
 * Example config
 Here’s a Doom-style setup with keybindings:
