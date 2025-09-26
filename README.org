@@ -1,0 +1,143 @@
+#+TITLE: Zorg.el – Zen mode with Org-focused project notes
+#+AUTHOR: MWAC-dev
+#+OPTIONS: toc:nil num:nil
+#+PROPERTY: header-args:emacs-lisp :mkdirp yes
+
+* Introduction
+Zorg is a *Zen mode + project notes system* for Emacs, built around Org mode.
+
+It creates side panels for project notes, leaving your main buffer centered and uncluttered.  
+Notes can be scoped to a single file, a directory, the whole project, or live globally.  
+
+Think of it as a lightweight *scratchpad system for projects*:
+- **Paired notes** stick to specific files (with rename/move support via alias association).
+- **Directory notes** cover folders.
+- **Loose notes** float inside the project.
+- **Global notes** live outside projects.
+
+Zorg also includes helpers to link back to code (deep links to file + line in the main buffer) or to other notes.
+
+This is still *experimental* and evolving — feedback and contributions are welcome!
+
+* Installation
+Clone this repo somewhere on your load path (e.g. =~/.config/doom/lisp/=):
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/.config/doom/lisp/zorg")
+(require 'zorg)
+#+end_src
+
+Now you can toggle Zorg with ~M-x zorg-mode~.
+
+* Features
+- **Zen layout**: Center buffer flanked by two side panels.
+- **Paired notes**: Notes bound to specific files. Supports multiple notes per file.  
+  - Uses alias files so associations survive renames and moves.
+- **Directory notes**: Notes scoped to a folder.
+- **Loose notes**: Project-level scratchpad notes.
+- **Global notes**: Scratchpads outside projects.
+- **Link helpers**: Insert links back into code or between notes.
+- **Finder commands**: Quickly browse all note types.
+- **Layout control**: Toggle or resize side panels, with automatic width persistence.
+
+* Configuration
+** Global notes directory
+By default, project-local notes live under =.zorg-notes/= inside each project.  
+Global notes default to =~/projects/org/zorg/=, but you can change this:
+
+#+begin_src emacs-lisp
+(setq zorg-global-dir "~/Documents/zorg-notes/")
+#+end_src
+
+** Side panel widths
+You can customize and persist panel widths:
+
+#+begin_src emacs-lisp
+(setq zorg-width-left  40
+      zorg-width-right 40)
+#+end_src
+
+Widths auto-save when exiting Zorg mode, but you can force a save with:
+
+#+begin_src emacs-lisp
+M-x zorg-save-widths
+#+end_src
+
+* Commands
+Here’s the full command set:
+
+- ~M-x zorg-mode~ :: Toggle Zen layout with side panels.
+- ~M-x zorg-note-new~ :: Create a new loose note.
+- ~M-x zorg-pair-note~ :: Open or create note(s) for the current file.
+- ~M-x zorg-create-new-pair-note~ :: Create an additional paired note.
+- ~M-x zorg-dir-note~ :: Open or create a note for the current directory.
+- ~M-x zorg-create-new-dir-note~ :: Always create a new directory note.
+- ~M-x zorg-find-pair-notes~ :: Pick from paired notes for the current file.
+- ~M-x zorg-find-directory-notes~ :: Pick from notes scoped to the current directory.
+- ~M-x zorg-find-directory-notes-recursive~ :: Same as above, but recursive.
+- ~M-x zorg-find-loose-notes~ :: Pick from loose project notes.
+- ~M-x zorg-find-global-notes~ :: Pick from global notes.
+- ~M-x zorg-create-global-note~ :: Create a new global note.
+- ~M-x zorg-reset-custom-layout~ :: Reset panel widths to your preferred defaults.
+- ~M-x zorg-set-pair-to-existing-note~ :: Associate the current file with an existing paired note (creates an alias so it survives renames/moves).
+
+* Linking helpers
+Zorg provides two main ways to cross-reference:
+
+- ~M-x zorg-copy-link-to-here~ ::
+  - From the main buffer → copies a deep link (file + line) to the kill ring.  
+  - From a side buffer → inserts the link into the note *and* copies it.
+
+  Example:
+
+  [[zorgmain:/home/user/project/src/main.c::42][main.c:42]]
+
+  These always reopen the file in the *main buffer* and scroll the target line to the top.
+
+- ~M-x zorg-insert-note-link~ ::
+  Lets you pick another Zorg note and insert a link to it.  
+  - Skips self-links.  
+  - Uses the human-readable slug for the label.  
+  - Always reopens in the *same side window*.
+
+  Example:
+
+  [[file:/home/user/project/.zorg-notes/paired/abcd1234-DesignIdeas.org][DesignIdeas]]
+
+* Example config
+Here’s a Doom-style setup with keybindings:
+
+#+begin_src emacs-lisp
+;; Ensure alias/association mode so paired notes survive renames/moves
+;; (this is the default now, but being explicit is safer)
+(setq zorg-pair-method 'hash) ;; 'hash is default, but notes can be re-associated via `zorg-set-pair-to-existing-note`
+
+(map! :leader
+      ;; Toggle
+      :desc "Toggle Zorg mode" "z z" #'zorg-mode
+
+      ;; Create new notes
+      (:prefix ("z n" . "Zorg notes - new")
+       :desc "New loose note"     "l" #'zorg-note-new
+       :desc "New pair note"      "p" #'zorg-create-new-pair-note
+       :desc "New directory note" "d" #'zorg-create-new-dir-note
+       :desc "New global note"    "g" #'zorg-create-global-note)
+
+      ;; Open/create contextual notes
+      (:prefix ("z o" . "Zorg notes - open/create")
+       :desc "Paired note (for file)"      "p" #'zorg-pair-note
+       :desc "Directory note (for folder)" "d" #'zorg-dir-note)
+
+      ;; Finders
+      (:prefix ("f z" . "Zorg notes - find")
+       :desc "Find loose notes"           "l" #'zorg-find-loose-notes
+       :desc "Find pair notes"            "p" #'zorg-find-pair-notes
+       :desc "Find directory notes"       "d" #'zorg-find-directory-notes
+       :desc "Find recursive dir notes"   "r" #'zorg-find-directory-notes-recursive
+       :desc "Find global notes"          "g" #'zorg-find-global-notes))
+#+end_src
+
+⚠️ *Note*: The above uses Doom’s `map!`.  
+For vanilla Emacs, replace these with `global-set-key` or `define-key`.  
+
+As with any software: bugs happen, so please use version control and open issues if something breaks.
