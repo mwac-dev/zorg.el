@@ -266,14 +266,16 @@ intended for personal/global notes you want available everywhere."
         (zorg--choose-note-from files "Global note: ")
       (message "No global notes found."))))
 
-(defun zorg-create-global-note (title)
+(defun zorg-create-new-global-note (title)
   "Create a global note with TITLE in `zorg-global-dir`."
   (interactive "sGlobal note title: ")
   (let* ((slug (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" title))
          (note (expand-file-name (concat slug ".org") zorg-global-dir)))
-    (zorg--ensure-dir note)
-    (find-file note)
-    (org-mode)))
+    (make-directory zorg-global-dir t) ;; ensure global dir exists
+    (unless (file-exists-p note)
+      (with-temp-file note
+        (insert (format "# Global note: %s\n\n" title))))
+    (zorg--open-note-in-side note)))
 
 (defun zorg-find-pair-notes ()
   "Pick one of the paired notes for the current file, showing only titles."
