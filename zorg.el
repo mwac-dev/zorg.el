@@ -40,6 +40,62 @@
 (defvar zorg--left-window nil)
 (defvar zorg--right-window nil)
 
+;; Width state management
+(defvar zorg--desired-left-width nil
+  "The desired width for the left panel. When nil, uses `zorg-width-left`.")
+(defvar zorg--desired-right-width nil
+  "The desired width for the right panel. When nil, uses `zorg-width-right`.")
+(defvar zorg--saved-left-width nil
+  "Last non-zero width for the left panel, used when toggling back on.")
+(defvar zorg--saved-right-width nil
+  "Last non-zero width for the right panel, used when toggling back on.")
+
+(defun zorg--get-current-left-width ()
+  "Get the current effective left width (0 if disabled)."
+  (or zorg--desired-left-width zorg-width-left))
+
+(defun zorg--get-current-right-width ()
+  "Get the current effective right width (0 if disabled)."
+  (or zorg--desired-right-width zorg-width-right))
+
+(defun zorg--set-left-width (width)
+  "Set the desired left width, updating both desired and customization variables."
+  (setq zorg--desired-left-width width
+        zorg-width-left width))
+
+(defun zorg--set-right-width (width)
+  "Set the desired right width, updating both desired and customization variables."
+  (setq zorg--desired-right-width width
+        zorg-width-right width))
+
+(defun zorg--initialize-saved-widths ()
+  "Initialize saved width variables if they haven't been set yet."
+  (unless zorg--saved-left-width
+    (setq zorg--saved-left-width (if (> zorg-width-left 0) zorg-width-left 40)))
+  (unless zorg--saved-right-width
+    (setq zorg--saved-right-width (if (> zorg-width-right 0) zorg-width-right 40)))
+  ;; Ensure saved widths are reasonable (between 20 and 100)
+  (when (or (< zorg--saved-left-width 20) (> zorg--saved-left-width 100))
+    (setq zorg--saved-left-width 40))
+  (when (or (< zorg--saved-right-width 20) (> zorg--saved-right-width 100))
+    (setq zorg--saved-right-width 40)))
+
+(defun zorg-debug-widths ()
+  "Show current width state for debugging."
+  (interactive)
+  (message "=== Zorg Width Debug ===")
+  (message "Active: %s" zorg--active-p)
+  (message "Customization vars: L=%d M=%d R=%d" zorg-width-left zorg-width-main zorg-width-right)
+  (message "Desired widths: L=%s R=%s" zorg--desired-left-width zorg--desired-right-width)
+  (message "Saved widths: L=%s R=%s" zorg--saved-left-width zorg--saved-right-width)
+  (message "Current effective: L=%d R=%d" (zorg--get-current-left-width) (zorg--get-current-right-width))
+  (when zorg--active-p
+    (message "Actual window widths: L=%s R=%s"
+             (if (window-live-p zorg--left-window) 
+                 (window-total-width zorg--left-window) "none")
+             (if (window-live-p zorg--right-window) 
+                 (window-total-width zorg--right-window) "none"))))
+
 (defun zorg--project-root ()
   (or (when-let ((proj (project-current))) (project-root proj))
       default-directory))
@@ -457,10 +513,10 @@ If called from a side window, reuse it. Otherwise prompt left/right."
   "Reset Zorg windows to my preferred widths."
   (interactive)
   ;; overwrite the saved + current widths
-  (setq zorg-width-left  44
-        zorg-width-main  199
-        zorg-width-right 40
-        zorg--saved-left-width  44
+  (zorg--set-left-width 44)
+  (zorg--set-right-width 40)
+  (setq zorg-width-main 199
+        zorg--saved-left-width 44
         zorg--saved-right-width 40)
   ;; if active, rebuild right away
   (if zorg--active-p
@@ -469,65 +525,61 @@ If called from a side window, reuse it. Otherwise prompt left/right."
 
 
 (defun zorg--capture-widths ()
-  "Save real current widths into `zorg-width-*` variables."
+  "Save real current widths into width variables."
   (when zorg--active-p
-    (let ((total (frame-width)))
-      (setq zorg-width-left
-            (if (window-live-p zorg--left-window)
-                (window-total-width zorg--left-window) 0))
-      (setq zorg-width-right
-            (if (window-live-p zorg--right-window)
-                (window-total-width zorg--right-window) 0))
-      (setq zorg-width-main
-            (- total zorg-width-left zorg-width-right)))))
+    (let ((total (frame-width))
+          (left-width (if (window-live-p zorg--left-window)
+                          (window-total-width zorg--left-window) 0))
+          (right-width (if (window-live-p zorg--right-window)
+                           (window-total-width zorg--right-window) 0)))
+      (zorg--set-left-width left-width)
+      (zorg--set-right-width right-width)
+      (setq zorg-width-main (- total left-width right-width)))))
 
-(defvar zorg--saved-left-width 40
-  "Last non-zero width for the left panel, used when toggling it back on.")
 
 (defun zorg-toggle-left ()
   "Toggle the left Zorg panel between hidden (0) and its saved width.
 When turning off, shrink only the left window so the main window expands.
 When turning on, restore the left width (default 40 if none saved)."
   (interactive)
-  (if (zerop zorg-width-left)
-      ;; Turn ON
-      (setq zorg-width-left (if (> zorg--saved-left-width 0)
-                                zorg--saved-left-width
-                              40))
-    ;; Turn OFF
-    (setq zorg--saved-left-width zorg-width-left
-          zorg-width-left 0))
+  (zorg--initialize-saved-widths)
+  (let ((current-width (zorg--get-current-left-width)))
+    (if (zerop current-width)
+        ;; Turn ON: restore from saved width
+        (zorg--set-left-width (or zorg--saved-left-width 40))
+      ;; Turn OFF: save current width and set to 0
+      (setq zorg--saved-left-width current-width)
+      (zorg--set-left-width 0)))
   (when zorg--active-p
     (zorg--setup-layout)
-    ;; --- Fix: force opposite side to keep its size
+    ;; Force right panel to maintain its size
     (when (window-live-p zorg--right-window)
-      (window-resize zorg--right-window
-                     (- zorg-width-right (window-total-width zorg--right-window))
-                     t))))
-
-(defvar zorg--saved-right-width 40
-  "Last non-zero width for the right panel, used when toggling it back on.")
+      (let ((target-right-width (zorg--get-current-right-width)))
+        (window-resize zorg--right-window
+                       (- target-right-width (window-total-width zorg--right-window))
+                       t)))))
 
 (defun zorg-toggle-right ()
   "Toggle the right Zorg panel between hidden (0) and its saved width.
 When turning off, shrink only the right window so the main window expands.
 When turning on, restore the right width (default 40 if none saved)."
   (interactive)
-  (if (zerop zorg-width-right)
-      ;; Turn ON
-      (setq zorg-width-right (if (> zorg--saved-right-width 0)
-                                 zorg--saved-right-width
-                               40))
-    ;; Turn OFF
-    (setq zorg--saved-right-width zorg-width-right
-          zorg-width-right 0))
+  (zorg--initialize-saved-widths)
+  (let ((current-width (zorg--get-current-right-width)))
+    (if (zerop current-width)
+        ;; Turn ON: restore from saved width
+        (zorg--set-right-width (or zorg--saved-right-width 40))
+      ;; Turn OFF: save current width and set to 0
+      (setq zorg--saved-right-width current-width)
+      (zorg--set-right-width 0)))
   (when zorg--active-p
     (zorg--setup-layout)
-    ;; --- Fix: force opposite side to keep its size
+    ;; Force left panel to maintain its size
     (when (window-live-p zorg--left-window)
-      (window-resize zorg--left-window
-                     (- zorg-width-left (window-total-width zorg--left-window))
-                     t))))
+      (let ((target-left-width (zorg--get-current-left-width)))
+        (window-resize zorg--left-window
+                       (- target-left-width (window-total-width zorg--left-window))
+                       t)))))
 
 (defun zorg-save-widths ()
   (interactive)
@@ -541,23 +593,25 @@ When turning on, restore the right width (default 40 if none saved)."
 (add-hook 'kill-emacs-hook #'zorg-save-widths)
 
 (defun zorg--setup-layout ()
-  "Recreate Zorg layout with exact `zorg-width-*` widths."
-  (let ((main-buf (current-buffer)))
+  "Recreate Zorg layout with exact widths from current settings."
+  (let ((main-buf (current-buffer))
+        (left-width (zorg--get-current-left-width))
+        (right-width (zorg--get-current-right-width)))
     (delete-other-windows)
     (let ((center (selected-window)))
       (set-window-parameter center 'zorg-role 'main)
 
       ;; Always split LEFT first
-      (when (> zorg-width-left 0)
-        (setq zorg--left-window (split-window center zorg-width-left 'left))
+      (when (> left-width 0)
+        (setq zorg--left-window (split-window center left-width 'left))
         (with-selected-window zorg--left-window
           (switch-to-buffer (get-buffer-create "*zorg-left*"))
           (org-mode))
         (set-window-parameter zorg--left-window 'zorg-role 'left))
 
       ;; Then split RIGHT from the (new) center
-      (when (> zorg-width-right 0)
-        (setq zorg--right-window (split-window center zorg-width-right 'right))
+      (when (> right-width 0)
+        (setq zorg--right-window (split-window center right-width 'right))
         (with-selected-window zorg--right-window
           (switch-to-buffer (get-buffer-create "*zorg-right*"))
           (org-mode))
@@ -568,15 +622,14 @@ When turning on, restore the right width (default 40 if none saved)."
         (switch-to-buffer main-buf))
 
       ;; Now force exact widths
-      (let ((total (frame-width)))
-        (when (window-live-p zorg--left-window)
-          (window-resize zorg--left-window
-                         (- zorg-width-left (window-total-width zorg--left-window))
-                         t))
-        (when (window-live-p zorg--right-window)
-          (window-resize zorg--right-window
-                         (- zorg-width-right (window-total-width zorg--right-window))
-                         t)))
+      (when (window-live-p zorg--left-window)
+        (window-resize zorg--left-window
+                       (- left-width (window-total-width zorg--left-window))
+                       t))
+      (when (window-live-p zorg--right-window)
+        (window-resize zorg--right-window
+                       (- right-width (window-total-width zorg--right-window))
+                       t))
       ;; center auto-adjusts
       (select-window center))))
 
@@ -588,8 +641,8 @@ When turning on, restore the right width (default 40 if none saved)."
   (if zorg--active-p
       ;; --- turn off
       (progn
-        ;; Save actual current widths so the *next* toggle uses them
-        (zorg-save-widths)
+        ;; Capture current widths before turning off
+        (zorg--capture-widths)
         (let ((main-buf (zorg--main-buffer)))
           (delete-other-windows)
           (when (buffer-live-p main-buf)
@@ -600,10 +653,18 @@ When turning on, restore the right width (default 40 if none saved)."
               zorg--right-window nil)
         (message "Zorg mode off"))
     ;; --- turn on
-    (setq zorg--saved-config (current-window-configuration)
-          zorg--active-p t)
-    (zorg--setup-layout)
-    (message "Zorg mode on")))
+    (progn
+      ;; Initialize saved widths if needed
+      (zorg--initialize-saved-widths)
+      ;; Reset desired widths to match customization variables if they're unset
+      (unless zorg--desired-left-width
+        (setq zorg--desired-left-width zorg-width-left))
+      (unless zorg--desired-right-width
+        (setq zorg--desired-right-width zorg-width-right))
+      (setq zorg--saved-config (current-window-configuration)
+            zorg--active-p t)
+      (zorg--setup-layout)
+      (message "Zorg mode on"))))
 
 
 (defun zorg--maybe-restore-layout (&rest _)
@@ -728,6 +789,147 @@ calling buffer (side window)."
                (choice (completing-read "Link to note: " (mapcar #'car choices) nil t))
                (path (cdr (assoc choice choices))))
           (insert (format "[[file:%s][%s]]" path choice)))))))
+
+;;-------------------
+;; AI Tools Integration
+;;-------------------
+
+(defvar zorg--ai-state nil
+  "Current AI tool state: nil, 'gptel, or 'copilot.")
+
+(defvar zorg--right-saved-buffer nil
+  "Buffer that was in the right window before AI tools.")
+
+(defvar zorg--right-was-closed nil
+  "Whether the right panel was closed (width 0) before AI activation.")
+
+(defun zorg--save-right-state ()
+  "Save the current state of the right panel before AI activation."
+  (setq zorg--right-was-closed (zerop (zorg--get-current-right-width)))
+  (when (and (not zorg--right-was-closed) 
+             (window-live-p zorg--right-window))
+    (setq zorg--right-saved-buffer (window-buffer zorg--right-window))))
+
+(defun zorg--restore-right-state ()
+  "Restore the right panel to its pre-AI state."
+  (cond
+   ;; If right panel was closed, close it again
+   (zorg--right-was-closed
+    (let ((current-width (zorg--get-current-right-width)))
+      (when (> current-width 0)
+        (setq zorg--saved-right-width current-width))
+      (zorg--set-right-width 0))
+    (when zorg--active-p
+      (zorg--setup-layout)
+      ;; Force left panel to keep its size
+      (when (window-live-p zorg--left-window)
+        (let ((target-left-width (zorg--get-current-left-width)))
+          (window-resize zorg--left-window
+                         (- target-left-width (window-total-width zorg--left-window))
+                         t)))))
+   ;; If there was a saved buffer, restore it
+   ((and zorg--right-saved-buffer 
+         (buffer-live-p zorg--right-saved-buffer)
+         (window-live-p zorg--right-window))
+    (with-selected-window zorg--right-window
+      (switch-to-buffer zorg--right-saved-buffer)))
+   ;; Otherwise, show the default right buffer
+   ((window-live-p zorg--right-window)
+    (with-selected-window zorg--right-window
+      (switch-to-buffer (get-buffer-create "*zorg-right*"))
+      (org-mode))))
+  (setq zorg--ai-state nil
+        zorg--right-saved-buffer nil
+        zorg--right-was-closed nil))
+
+(defun zorg--ensure-right-panel ()
+  "Ensure the right panel is open, opening at default width if closed."
+  (when (zerop (zorg--get-current-right-width))
+    (zorg--initialize-saved-widths)
+    (zorg--set-right-width (or zorg--saved-right-width 40))
+    (when zorg--active-p
+      (zorg--setup-layout))))
+
+(defun zorg-ai-gptel ()
+  "Toggle gptel in the right buffer, preserving panel state."
+  (interactive)
+  (unless zorg--active-p
+    (user-error "Zorg mode is not active"))
+
+  (cond
+   ;; If gptel is already active, restore previous state
+   ((eq zorg--ai-state 'gptel)
+    (zorg--restore-right-state))
+
+   ;; If another AI tool is active, switch to gptel
+   ((eq zorg--ai-state 'copilot)
+    (zorg--ensure-right-panel)
+    (when (window-live-p zorg--right-window)
+      (with-selected-window zorg--right-window
+        (switch-to-buffer (gptel "*zorg-gptel*")))) ;; <--- switch explicitly
+    (setq zorg--ai-state 'gptel))
+
+   ;; If no AI tool is active, activate gptel
+   (t
+    (zorg--save-right-state)
+    (zorg--ensure-right-panel)
+    (when (window-live-p zorg--right-window)
+      (with-selected-window zorg--right-window
+        (switch-to-buffer (gptel "*zorg-gptel*")))) ;; <--- switch explicitly
+    (setq zorg--ai-state 'gptel))))
+
+(defun zorg-ai-copilot ()
+  "Toggle copilot CLI in the right buffer via vterm, preserving panel state."
+  (interactive)
+  (unless zorg--active-p
+    (user-error "Zorg mode is not active"))
+  
+  (cond
+   ;; If copilot is already active, restore previous state
+   ((eq zorg--ai-state 'copilot)
+    (zorg--restore-right-state))
+   
+   ;; If another AI tool is active, switch to copilot
+   ((eq zorg--ai-state 'gptel)
+    (zorg--ensure-right-panel)
+    (when (window-live-p zorg--right-window)
+      (with-selected-window zorg--right-window
+        ;; Just switch to existing copilot buffer or create new one without running commands
+        (if (get-buffer "*zorg-copilot*")
+            (switch-to-buffer "*zorg-copilot*")
+          (progn
+            (vterm "*zorg-copilot*")
+            ;; Only run copilot if this is a new buffer
+            (let ((project-root (zorg--project-root)))
+              (vterm-send-string (format "cd %s" (shell-quote-argument project-root)))
+              (vterm-send-return)
+              (vterm-send-string "copilot")
+              (vterm-send-return))))))
+    (setq zorg--ai-state 'copilot))
+   
+   ;; If no AI tool is active, activate copilot
+   (t
+    (zorg--save-right-state)
+    (zorg--ensure-right-panel)
+    (when (window-live-p zorg--right-window)
+      (with-selected-window zorg--right-window
+        ;; Check if copilot buffer already exists and has copilot running
+        (if (and (get-buffer "*zorg-copilot*")
+                 (with-current-buffer "*zorg-copilot*"
+                   ;; Check if vterm process is alive and buffer has content
+                   (and (get-buffer-process (current-buffer))
+                        (> (buffer-size) 0))))
+            ;; Just switch to existing buffer - don't run commands
+            (switch-to-buffer "*zorg-copilot*")
+          ;; Create new buffer and run copilot
+          (progn
+            (vterm "*zorg-copilot*")
+            (let ((project-root (zorg--project-root)))
+              (vterm-send-string (format "cd %s" (shell-quote-argument project-root)))
+              (vterm-send-return)
+              (vterm-send-string "copilot")
+              (vterm-send-return))))))
+    (setq zorg--ai-state 'copilot))))
 
 (provide 'zorg)
 
