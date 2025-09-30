@@ -4,7 +4,7 @@
 
 *** Added
 - Configurable AI CLI command: New `zorg-ai-cli-command` variable (default: "copilot") allows any AI CLI tool
-- WIP (see  [[Known Bug]]) Auto-restart functionality: New `zorg-ai-cli-restart-if-not-running` variable (default: t) automatically restarts dead processes
+- WIP (see Known Bug) Auto-restart functionality: New `zorg-ai-cli-restart-if-not-running` variable (default: t) automatically restarts dead processes
 - Interactive configuration: New `zorg-set-ai-cli-command` function for easy AI CLI setup
 - Process management: Intelligent detection of whether AI CLI processes are running vs. dead
 - Enhanced documentation: Updated README with comprehensive AI agent configuration examples
