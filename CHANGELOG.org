@@ -1,0 +1,30 @@
+* Changelog
+
+** Mon Sep 29 2025
+
+*** Fixed
+- Percentage-based saving: `zorg-save-fractions` now properly captures and saves actual percentage values from current window widths instead of incorrect column values
+- AI panel configuration: AI tools (gptel, copilot CLI) now respect the configurable `zorg-ai-side` variable and open in the correct side panel
+- Seamless AI switching: AI tools now seamlessly preserve and restore panel states when toggling on/off or switching between tools
+
+*** Added
+- Configurable AI side: New `zorg-ai-side` variable (defaults to 'right; can be set to 'left) to control which panel AI tools use
+- Improved state management: AI tools now properly save and restore the previous panel state
+- Updated documentation: Added AI integration documentation and updated README with new configuration options
+- Debug improvements: Enhanced `zorg-debug-widths` to show AI configuration state
+
+*** Changed
+- Fraction capture: Toggle functions now properly save current window fractions when panels are disabled
+- Custom variables cleanup: Removed obsolete column-based custom variables from custom.el
+- Generic AI helpers: Refactored AI state management to work with either left or right panels
+
+*** Technical Details
+- Added `zorg--save-ai-state()` and `zorg--restore-ai-state()` for generic panel state management
+- Added `zorg--ensure-ai-panel()` and `zorg--get-ai-window()` helper functions
+- Updated `zorg--capture-fractions()` to save to both live config and saved fraction variables
+- Enhanced error handling in custom variable cleanup
+
+This update ensures that:
+1. Panel widths are correctly saved as percentages and restored properly
+2. AI tools open in the user-configured side panel (left or right)
+3. Switching between AI tools or toggling them feels seamless and preserves previous states

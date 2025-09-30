@@ -6,7 +6,7 @@
 * Introduction
 Zorg is a *Zen mode + project notes system* for Emacs, built around Org mode.
 
-It creates side panels for project notes, leaving your main buffer centered and uncluttered.  
+It creates side panels for project notes, leaving your main buffer centered and uncluttered.
 Notes can be scoped to a single file, a directory, the whole project, or live globally.  
 
 Think of it as a lightweight *scratchpad system for projects*:
@@ -18,6 +18,8 @@ Think of it as a lightweight *scratchpad system for projects*:
 Zorg also includes helpers to link back to code (deep links to file + line in the main buffer) or to other notes.
 
 This is still *experimental* and evolving — feedback and contributions are welcome!
+
+/edit Mon Sep 29 2025 - I have also added some toggles for gptel and an ai agent cli of your choice, right now copilot is hardcoded but this will change after more testing/
 
 * Installation
 Clone this repo somewhere on your load path (e.g. =~/.config/doom/lisp/=):
@@ -38,7 +40,8 @@ Now you can toggle Zorg with ~M-x zorg-mode~.
 - **Global notes**: Scratchpads outside projects.
 - **Link helpers**: Insert links back into code or between notes.
 - **Finder commands**: Quickly browse all note types.
-- **Layout control**: Toggle or resize side panels, with automatic width persistence.
+- **Layout control**: Toggle or resize side panels, with automatic fraction persistence.
+- **AI Integration**: Seamless AI tool integration (gptel, copilot CLI) in configurable side panels.
 
 * Configuration
 ** Global notes directory
@@ -50,18 +53,27 @@ Global notes default to =~/projects/org/zorg/=, but you can change this:
 #+end_src
 
 ** Side panel widths
-You can customize and persist panel widths:
+You can customize and persist panel widths using fractions (0.0 to 1.0):
 
 #+begin_src emacs-lisp
-(setq zorg-width-left  40
-      zorg-width-right 40)
+(setq zorg-left-width-fraction  0.25   ; 25% of frame width
+      zorg-right-width-fraction 0.25)  ; 25% of frame width
 #+end_src
 
 Widths auto-save when exiting Zorg mode, but you can force a save with:
 
 #+begin_src emacs-lisp
-M-x zorg-save-widths
+M-x zorg-save-fractions
 #+end_src
+
+** AI Tools Integration
+Zorg integrates with AI tools like gptel and copilot CLI. You can configure which side panel to use:
+
+#+begin_src emacs-lisp
+(setq zorg-ai-side 'right)  ; or 'left
+#+end_src
+
+AI tools will seamlessly open in the configured side panel and restore the previous state when toggled off.
 
 * Commands
 Here’s the full command set:
@@ -78,7 +90,10 @@ Here’s the full command set:
 - ~M-x zorg-find-loose-notes~ :: Pick from loose project notes.
 - ~M-x zorg-find-global-notes~ :: Pick from global notes.
 - ~M-x zorg-create-global-note~ :: Create a new global note.
-- ~M-x zorg-reset-custom-layout~ :: Reset panel widths to your preferred defaults.
+- ~M-x zorg-ai-gptel~ :: Toggle gptel in the configured AI side panel.
+- ~M-x zorg-ai-copilot~ :: Toggle copilot CLI in the configured AI side panel.
+- ~M-x zorg-reset-layout~ :: Reset panel widths to default fractions (25%).
+- ~M-x zorg-save-fractions~ :: Save current panel fractions to custom.el.
 - ~M-x zorg-set-pair-to-existing-note~ :: Associate the current file with an existing paired note (creates an alias so it survives renames/moves).
 
 * Linking helpers
@@ -128,7 +143,12 @@ Here’s a Doom-style setup with keybindings:
        :desc "Find pair notes"            "p" #'zorg-find-pair-notes
        :desc "Find directory notes"       "d" #'zorg-find-directory-notes
        :desc "Find recursive dir notes"   "r" #'zorg-find-directory-notes-recursive
-       :desc "Find global notes"          "g" #'zorg-find-global-notes))
+       :desc "Find global notes"          "g" #'zorg-find-global-notes)
+
+      ;; AI Tools
+      (:prefix ("z a" . "Zorg AI tools")
+       :desc "Toggle GPTel"               "g" #'zorg-ai-gptel
+       :desc "Toggle Copilot CLI"         "c" #'zorg-ai-copilot))
 #+end_src
 
 ⚠️ *Note*: The above uses Doom’s `map!`.  
