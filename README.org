@@ -15,11 +15,11 @@ Think of it as a lightweight *scratchpad system for projects*:
 - **Loose notes** float inside the project.
 - **Global notes** live outside projects.
 
-Zorg also includes helpers to link back to code (deep links to file + line in the main buffer) or to other notes.
+Zorg also includes helpers to link back to code (deep links to file + line in the main buffer) or to other notes, plus seamless integration with AI tools including gptel and configurable AI CLI agents.
 
 This is still *experimental* and evolving — feedback and contributions are welcome!
 
-/edit Mon Sep 29 2025 - I have also added some toggles for gptel and an ai agent cli of your choice, right now copilot is hardcoded but this will change after more testing/
+/edit Mon Sep 29 2025 - I have now added configurable AI agent CLI integration! You can use any AI CLI tool (copilot, aider, cursor, etc.) with automatic process management and restart capabilities./
 
 * Installation
 Clone this repo somewhere on your load path (e.g. =~/.config/doom/lisp/=):
@@ -41,7 +41,7 @@ Now you can toggle Zorg with ~M-x zorg-mode~.
 - **Link helpers**: Insert links back into code or between notes.
 - **Finder commands**: Quickly browse all note types.
 - **Layout control**: Toggle or resize side panels, with automatic fraction persistence.
-- **AI Integration**: Seamless AI tool integration (gptel, copilot CLI) in configurable side panels.
+- **AI Integration**: Seamless AI tool integration (gptel, customizable AI CLI agents) in configurable side panels with automatic process management.
 
 * Configuration
 ** Global notes directory
@@ -67,13 +67,59 @@ M-x zorg-save-fractions
 #+end_src
 
 ** AI Tools Integration
-Zorg integrates with AI tools like gptel and copilot CLI. You can configure which side panel to use:
+Zorg integrates with AI tools like gptel and any AI CLI agent. You can configure which side panel to use and customize the AI CLI command:
 
 #+begin_src emacs-lisp
 (setq zorg-ai-side 'right)  ; or 'left
+
+;; Set your preferred AI CLI command (default: "copilot")
+(setq zorg-ai-cli-command "copilot")  ; or "aider", "cursor", etc.
+
+;; Control automatic restart behavior (default: t)
+(setq zorg-ai-cli-restart-if-not-running t)  ; restart if process exits
 #+end_src
 
-AI tools will seamlessly open in the configured side panel and restore the previous state when toggled off.
+You can also set the AI CLI command interactively:
+#+begin_src emacs-lisp
+M-x zorg-set-ai-cli-command
+#+end_src
+
+AI tools will seamlessly open in the configured side panel and restore the previous state when toggled off. If the AI CLI process exits, Zorg can automatically restart it when you next toggle the agent (controlled by ~zorg-ai-cli-restart-if-not-running~).
+
+** AI Agent Examples
+Here are some popular AI CLI tools you can use:
+
+#+begin_src emacs-lisp
+;; GitHub Copilot CLI (default)
+(setq zorg-ai-cli-command "copilot")
+
+;; Aider - AI pair programming tool
+(setq zorg-ai-cli-command "aider")
+
+;; Cursor CLI
+(setq zorg-ai-cli-command "cursor")
+
+;; Custom command with arguments
+(setq zorg-ai-cli-command "my-ai-tool --interactive")
+#+end_src
+
+*Note*: ~zorg-ai-copilot~ is still available as a compatibility alias for ~zorg-ai-agent~.
+
+** Configuration Variables
+All Zorg settings can be customized via the customization system:
+
+#+begin_src emacs-lisp
+M-x customize-group RET zorg RET
+#+end_src
+
+Key variables include:
+- ~zorg-notes-dir~ :: Directory for project notes (default: ".zorg-notes")
+- ~zorg-global-dir~ :: Directory for global notes (default: "~/projects/org/zorg/")
+- ~zorg-left-width-fraction~ :: Left panel width as fraction (default: 0.25)
+- ~zorg-right-width-fraction~ :: Right panel width as fraction (default: 0.25)
+- ~zorg-ai-side~ :: Which side for AI tools ('left or 'right, default: 'right)
+- ~zorg-ai-cli-command~ :: AI CLI command to run (default: "copilot")
+- ~zorg-ai-cli-restart-if-not-running~ :: Auto-restart CLI if process exits (default: t)
 
 * Commands
 Here’s the full command set:
@@ -91,7 +137,8 @@ Here’s the full command set:
 - ~M-x zorg-find-global-notes~ :: Pick from global notes.
 - ~M-x zorg-create-global-note~ :: Create a new global note.
 - ~M-x zorg-ai-gptel~ :: Toggle gptel in the configured AI side panel.
-- ~M-x zorg-ai-copilot~ :: Toggle copilot CLI in the configured AI side panel.
+- ~M-x zorg-ai-agent~ :: Toggle AI agent CLI in the configured AI side panel.
+- ~M-x zorg-set-ai-cli-command~ :: Set the AI CLI command interactively.
 - ~M-x zorg-reset-layout~ :: Reset panel widths to default fractions (25%).
 - ~M-x zorg-save-fractions~ :: Save current panel fractions to custom.el.
 - ~M-x zorg-set-pair-to-existing-note~ :: Associate the current file with an existing paired note (creates an alias so it survives renames/moves).
@@ -148,7 +195,8 @@ Here’s a Doom-style setup with keybindings:
       ;; AI Tools
       (:prefix ("z a" . "Zorg AI tools")
        :desc "Toggle GPTel"               "g" #'zorg-ai-gptel
-       :desc "Toggle Copilot CLI"         "c" #'zorg-ai-copilot))
+       :desc "Toggle AI Agent CLI"        "a" #'zorg-ai-agent
+       :desc "Set AI CLI command"         "s" #'zorg-set-ai-cli-command))
 #+end_src
 
 ⚠️ *Note*: The above uses Doom’s `map!`.  

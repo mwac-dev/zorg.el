@@ -20,10 +20,13 @@
 ;; - `M-x zorg-find-directory-notes-recursive` : Pick from notes under current directory.
 ;; - `M-x zorg-find-pair-notes`       : Pick from pair notes for current file.
 ;; - `M-x zorg-ai-gptel`              : Toggle gptel in the AI side panel.
-;; - `M-x zorg-ai-copilot`            : Toggle copilot CLI in the AI side panel.
+;; - `M-x zorg-ai-agent`              : Toggle AI agent CLI in the AI side panel.
+;; - `M-x zorg-set-ai-cli-command`    : Set the AI CLI command interactively.
 ;;
 ;; Configuration:
 ;; - `zorg-ai-side`: Set to 'left or 'right to choose which side panel AI tools use.
+;; - `zorg-ai-cli-command`: Command to run for the AI CLI (default: "copilot").
+;; - `zorg-ai-cli-restart-if-not-running`: Restart CLI if process is not running (default: t).
 ;; - `zorg-left-width-fraction`: Width of left panel as fraction (0.0-1.0).
 ;; - `zorg-right-width-fraction`: Width of right panel as fraction (0.0-1.0).
 
@@ -42,10 +45,17 @@
   :type 'string
   :group 'zorg)
 
-(defvar zorg--saved-config nil)
-(defvar zorg--active-p nil)
-(defvar zorg--left-window nil)
-(defvar zorg--right-window nil)
+(defvar zorg--saved-config nil
+  "Saved window configuration before Zorg mode was activated.")
+
+(defvar zorg--active-p nil
+  "Non-nil when Zorg mode is currently active.")
+
+(defvar zorg--left-window nil
+  "Reference to the left side window when Zorg mode is active.")
+
+(defvar zorg--right-window nil
+  "Reference to the right side window when Zorg mode is active.")
 
 ;; Side panel configuration using percentages for side window system
 (defcustom zorg-left-width-fraction 0.25
@@ -77,8 +87,22 @@ Set to 0.0 to disable the right panel."
                  (const :tag "Right side" right))
   :group 'zorg)
 
+(defcustom zorg-ai-cli-command "copilot"
+  "Command to run for the AI CLI tool.
+Can be any command like 'copilot', 'aider', 'cursor', etc."
+  :type 'string
+  :group 'zorg)
+
+(defcustom zorg-ai-cli-restart-if-not-running t
+  "Whether to restart the AI CLI if the process is not running.
+When t, automatically detects if the AI CLI process has exited and restarts it.
+When nil, simply switches to the existing buffer without checking process status."
+  :type 'boolean
+  :group 'zorg)
+
 (defun zorg--initialize-saved-fractions ()
-  "Initialize saved fraction variables if they haven't been set yet."
+  "Initialize saved fraction variables if they haven't been set yet.
+Ensures that saved fractions have reasonable default values between 0.1 and 0.5."
   (unless zorg--saved-left-fraction
     (setq zorg--saved-left-fraction (if (> zorg-left-width-fraction 0.0) 
                                         zorg-left-width-fraction 
@@ -102,12 +126,14 @@ Set to 0.0 to disable the right panel."
   (if zorg--right-enabled-p zorg-right-width-fraction 0.0))
 
 (defun zorg--set-left-fraction (fraction)
-  "Set the left width fraction and update customization variable."
+  "Set the left width fraction and update customization variable.
+FRACTION should be a float between 0.0 and 1.0."
   (setq zorg-left-width-fraction fraction)
   (setq zorg--left-enabled-p (> fraction 0.0)))
 
 (defun zorg--set-right-fraction (fraction)
-  "Set the right width fraction and update customization variable."
+  "Set the right width fraction and update customization variable.
+FRACTION should be a float between 0.0 and 1.0."
   (setq zorg-right-width-fraction fraction)
   (setq zorg--right-enabled-p (> fraction 0.0)))
 
@@ -137,13 +163,18 @@ Set to 0.0 to disable the right panel."
                  (window-total-width (zorg--main-window)) "none"))))
 
 (defun zorg--project-root ()
-  (or (when-let ((proj (project-current))) (project-root proj))
-      default-directory))
+  "Return the root directory of the current project.
+Falls back to `default-directory' if no project is detected."
+  (if-let ((proj (project-current)))
+      (expand-file-name (project-root proj))
+    default-directory))
 
 (defun zorg--notes-path ()
+  "Return the full path to the Zorg notes directory for the current project."
   (expand-file-name zorg-notes-dir (zorg--project-root)))
 
 (defun zorg--ensure-dir (path)
+  "Ensure that the directory containing PATH exists, creating it if necessary."
   (make-directory (file-name-directory path) t))
 
 (defun zorg--main-window ()
@@ -171,16 +202,23 @@ pick any live window that is not the recorded left/right window."
       (window-buffer w))))
 
 (defun zorg--main-file ()
+  "Return the file path of the file open in the main window.
+Returns nil if the main buffer is not visiting a file."
   (with-current-buffer (zorg--main-buffer)
     buffer-file-name))
 
 (defun zorg--in-side-window-p ()
+  "Check if the current window is a Zorg side window.
+Returns 'left if in the left side window, 'right if in the right side window,
+or nil if in the main window or Zorg mode is not active."
   (cond
    ((and zorg--left-window (eq (selected-window) zorg--left-window)) 'left)
    ((and zorg--right-window (eq (selected-window) zorg--right-window)) 'right)
    (t nil)))
 
 (defun zorg--select-side-window ()
+  "Prompt the user to select which side window to use and return it.
+Returns the left or right window object based on user choice."
   (let* ((choice (completing-read "Open in side: " '("left" "right") nil t)))
     (if (string= choice "left")
         zorg--left-window
@@ -188,6 +226,10 @@ pick any live window that is not the recorded left/right window."
 
 ;; -----------------------------
 ;; Directory notes
+;;
+;; Directory notes are scoped to a specific directory and use a hash-based
+;; naming system to ensure they persist across directory renames. Multiple
+;; notes can be associated with the same directory.
 ;; -----------------------------
 
 (defun zorg--dir-key (dir)
@@ -195,7 +237,9 @@ pick any live window that is not the recorded left/right window."
   (md5 (file-relative-name dir (zorg--project-root))))
 
 (defun zorg--make-dir-note (dir title)
-  "Create a directory note for DIR with TITLE."
+  "Create a directory note for DIR with TITLE.
+Returns the path to the created note file. The note file is named using
+a hash of the directory path plus the provided title slug."
   (let* ((hash (zorg--dir-key dir))
          (real-dir (expand-file-name "dir" (zorg--notes-path)))
          (slug (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" title))
@@ -242,10 +286,16 @@ pick any live window that is not the recorded left/right window."
 
 ;; -----------------------------
 ;; Paired notes
+;;
+;; Paired notes are associated with specific files using a hash-based system.
+;; They support alias files to maintain associations even when files are moved
+;; or renamed. Multiple notes can be paired with the same file.
 ;; -----------------------------
 
 (defun zorg--pair-files (rel)
-  "Return list of pair notes for REL, following alias indirections."
+  "Return list of pair notes for REL, following alias indirections.
+REL should be a relative file path from the project root.
+Resolves any .alias files to their target notes and returns actual note files."
   (let* ((real-dir (expand-file-name "paired" (zorg--notes-path)))
          (hash (md5 rel))
          (base (expand-file-name hash real-dir)))
@@ -322,7 +372,8 @@ Multiple files can point to the same note."
 
 
 (defun zorg--note-title (file)
-  "Extract the human-readable title (slug) from a pair FILE name."
+  "Extract the human-readable title (slug) from a pair FILE name.
+Removes the MD5 hash prefix to get the meaningful part of the filename."
   (let ((base (file-name-base file)))
     ;; Drop the leading md5 hash and dash
     (if (string-match "^[0-9a-f]\\{32\\}-\\(.*\\)$" base)
@@ -442,10 +493,15 @@ intended for personal/global notes you want available everywhere."
 
 ;; -----------------------------
 ;; Loose notes
+;;
+;; Loose notes are project-scoped but not tied to any specific file or directory.
+;; They provide a general scratchpad space within the project context.
 ;; -----------------------------
 
 (defun zorg-note-new (title)
-  "Create a loose note for this project."
+  "Create a loose note for this project.
+TITLE is the human-readable title which gets converted to a filename-safe slug.
+The note is created in the project's `.zorg-notes` directory."
   (interactive "sLoose note title: ")
   (let* ((slug (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" title))
          (note (expand-file-name (concat slug ".org")
@@ -453,7 +509,10 @@ intended for personal/global notes you want available everywhere."
     (zorg--ensure-dir note)
     (zorg--open-note-in-side note)))
 ;; -----------------------------
-;; Views
+;; Views and note browsing
+;;
+;; These functions handle opening notes in the appropriate side windows
+;; and provide various ways to browse and select existing notes.
 ;; -----------------------------
 
 
@@ -476,6 +535,8 @@ If called from a side window, reuse it. Otherwise prompt left/right."
           (user-error "Side window is not live")))))))
 
 (defun zorg--choose-note-from (files prompt)
+  "Present a completion interface to choose from FILES using PROMPT.
+Opens the selected note in the appropriate side window."
   (when files
     (let ((choice (completing-read prompt files nil t)))
       (zorg--open-note-in-side choice))))
@@ -530,13 +591,19 @@ If called from a side window, reuse it. Otherwise prompt left/right."
         (message "No notes found for this directory (recursive).")))))
 
 ;; -----------------------------
-;; Zorg layout
+;; Zorg layout management
+;;
+;; These functions handle the creation, configuration, and management of
+;; the Zorg window layout with its characteristic left-main-right structure.
+;; Uses Emacs' side window system with percentage-based sizing.
 ;; -----------------------------
 
 
 
 (defun zorg-reset-layout ()
-  "Reset Zorg panels to default fractions."
+  "Reset Zorg panels to default fractions.
+Sets both left and right panels to 25% width and enables them.
+If Zorg mode is currently active, immediately applies the new layout."
   (interactive)
   ;; Reset to default fractions
   (zorg--set-left-fraction 0.25)
@@ -552,7 +619,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
 
 
 (defun zorg--capture-fractions ()
-  "Save real current fractions from actual window widths."
+  "Save real current fractions from actual window widths.
+Updates the customization variables to reflect the current window layout
+so they can be persisted or restored later."
   (when zorg--active-p
     (let ((total (float (frame-width))))
       (when (window-live-p zorg--left-window)
@@ -565,7 +634,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
           (setq zorg--saved-right-fraction right-fraction))))))
 
 (defun zorg--clean-old-custom-variables ()
-  "Remove old column-based custom variables if they exist."
+  "Remove old column-based custom variables if they exist.
+This function helps migrate from older versions of Zorg that used
+column-based width settings instead of fraction-based ones."
   (when (boundp 'zorg-width-left)
     (makunbound 'zorg-width-left))
   (when (boundp 'zorg-width-main)
@@ -580,7 +651,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
         (message "Found old zorg-width variables in custom.el - please remove them manually")))))
 
 (defun zorg--cleanup-side-windows ()
-  "Clean up zorg side windows properly."
+  "Clean up zorg side windows properly.
+Deletes both side windows and kills their associated buffers to ensure
+a clean state when turning off Zorg mode."
   (when (window-live-p zorg--left-window)
     (delete-window zorg--left-window)
     (setq zorg--left-window nil))
@@ -595,7 +668,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
 
 
 (defun zorg-toggle-left ()
-  "Toggle the left Zorg panel between hidden and its saved fraction."
+  "Toggle the left Zorg panel between hidden and its saved fraction.
+When turning off, saves the current fraction and disables the panel.
+When turning on, restores the panel using the previously saved fraction."
   (interactive)
   (zorg--initialize-saved-fractions)
   (if zorg--left-enabled-p
@@ -614,7 +689,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
     (zorg--setup-layout)))
 
 (defun zorg-toggle-right ()
-  "Toggle the right Zorg panel between hidden and its saved fraction."
+  "Toggle the right Zorg panel between hidden and its saved fraction.
+When turning off, saves the current fraction and disables the panel.
+When turning on, restores the panel using the previously saved fraction."
   (interactive)
   (zorg--initialize-saved-fractions)
   (if zorg--right-enabled-p
@@ -633,7 +710,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
     (zorg--setup-layout)))
 
 (defun zorg-save-fractions ()
-  "Save current side panel fractions to custom.el."
+  "Save current side panel fractions to custom.el.
+Captures the actual window widths and saves them as customization variables
+for persistence across Emacs sessions."
   (interactive)
   (zorg--capture-fractions)
   (zorg--clean-old-custom-variables)
@@ -645,7 +724,9 @@ If called from a side window, reuse it. Otherwise prompt left/right."
 (add-hook 'kill-emacs-hook #'zorg-save-fractions)
 
 (defun zorg--setup-layout ()
-  "Recreate Zorg layout using Emacs side window system with percentage-based widths."
+  "Recreate Zorg layout using Emacs side window system with percentage-based widths.
+Creates side windows based on the current fraction settings and ensures
+proper window parameters are set for Zorg's window management."
   (let ((main-buf (current-buffer)))
     
     ;; Clean up any existing side windows first
@@ -726,16 +807,26 @@ If called from a side window, reuse it. Otherwise prompt left/right."
 
 
 (defun zorg--maybe-restore-layout (&rest _)
-  "If Zorg mode is active, restore its layout after project/workspace switch."
+  "If Zorg mode is active, restore its layout after project/workspace switch.
+This function is designed to be used as a hook function and ignores
+any arguments passed to it."
   (when zorg--active-p
     (zorg--setup-layout)))
 ;; Adapter for hooks that pass args we don't care about.
 (defun zorg--save-fractions-hook (&rest _)
+  "Save current fractions when Zorg mode is active.
+This function is designed to be used as a hook function and ignores
+any arguments passed to it."
   (when zorg--active-p
     (zorg-save-fractions)))
 
 ;;saving and then restoring on project switching
 ;;might add project-specific layouts but for now its global
+
+;; Integration with various workspace/project switching systems
+;; These hooks ensure that Zorg layouts are preserved and restored
+;; when switching between projects or workspaces.
+
 ;; Doom workspaces (persp-mode)
 (with-eval-after-load 'persp-mode
   (add-hook 'persp-before-switch-functions #'zorg--save-fractions-hook)
@@ -753,9 +844,12 @@ If called from a side window, reuse it. Otherwise prompt left/right."
   (add-hook 'tab-bar-switch-hook             #'zorg--maybe-restore-layout))
 
 
-;;-------------------
 ;; Zorg Linking Helpers
-;;-------------------
+;;
+;; These functions provide specialized linking capabilities for Zorg notes:
+;; - `zorgmain:` links that always open in the main window
+;; - Helper functions to copy links to current location
+;; - Functions to insert links between notes
 
 (defun zorg--open-in-main-or-side (orig-fun file &optional arg)
   "Open links differently depending on scheme.
@@ -848,12 +942,15 @@ calling buffer (side window)."
                (path (cdr (assoc choice choices))))
           (insert (format "[[file:%s][%s]]" path choice)))))))
 
-;;-------------------
 ;; AI Tools Integration
-;;-------------------
+;;
+;; The following variables and functions provide seamless integration
+;; with AI tools like gptel and copilot CLI. AI tools can be toggled
+;; into one of the side panels, and the system preserves the state
+;; of whatever was in that panel before the AI tool was activated.
 
 (defvar zorg--ai-state nil
-  "Current AI tool state: nil, 'gptel, or 'copilot.")
+  "Current AI tool state: nil, 'gptel, or 'agent.")
 
 (defvar zorg--ai-saved-buffer nil
   "Buffer that was in the AI side panel before AI tools.")
@@ -862,14 +959,16 @@ calling buffer (side window)."
   "Whether the AI side panel was disabled before AI activation.")
 
 (defun zorg--save-right-state ()
-  "Save the current state of the right panel before AI activation."
+  "Save the current state of the right panel before AI activation.
+This is used to restore the panel to its previous state when AI tools are toggled off."
   (setq zorg--right-was-closed (not zorg--right-enabled-p))
   (when (and zorg--right-enabled-p 
              (window-live-p zorg--right-window))
     (setq zorg--right-saved-buffer (window-buffer zorg--right-window))))
 
 (defun zorg--restore-right-state ()
-  "Restore the right panel to its pre-AI state."
+  "Restore the right panel to its pre-AI state.
+Handles three cases: panel was closed, had a specific buffer, or gets default buffer."
   (cond
    ;; If right panel was closed, close it again
    (zorg--right-was-closed
@@ -892,7 +991,8 @@ calling buffer (side window)."
         zorg--right-was-closed nil))
 
 (defun zorg--ensure-right-panel ()
-  "Ensure the right panel is open, opening at default fraction if closed."
+  "Ensure the right panel is open, opening at default fraction if closed.
+Used by AI tools that need the right panel to be available."
   (unless zorg--right-enabled-p
     (zorg--initialize-saved-fractions)
     (zorg--set-right-fraction (or zorg--saved-right-fraction 0.25))
@@ -901,7 +1001,8 @@ calling buffer (side window)."
       (zorg--setup-layout))))
 
 (defun zorg--save-ai-state ()
-  "Save the current state of the AI side panel before AI activation."
+  "Save the current state of the AI side panel before AI activation.
+Works with either left or right panel depending on `zorg-ai-side' configuration."
   (if (eq zorg-ai-side 'left)
       (progn
         (setq zorg--ai-side-was-closed (not zorg--left-enabled-p))
@@ -915,7 +1016,8 @@ calling buffer (side window)."
         (setq zorg--ai-saved-buffer (window-buffer zorg--right-window))))))
 
 (defun zorg--restore-ai-state ()
-  "Restore the AI side panel to its pre-AI state."
+  "Restore the AI side panel to its pre-AI state.
+Handles restoring either left or right panel depending on `zorg-ai-side' configuration."
   (if (eq zorg-ai-side 'left)
       (cond
        ;; If left panel was closed, close it again
@@ -956,7 +1058,8 @@ calling buffer (side window)."
         zorg--ai-side-was-closed nil))
 
 (defun zorg--ensure-ai-panel ()
-  "Ensure the AI side panel is open, opening at default fraction if closed."
+  "Ensure the AI side panel is open, opening at default fraction if closed.
+Works with either left or right panel depending on `zorg-ai-side' configuration."
   (if (eq zorg-ai-side 'left)
       (unless zorg--left-enabled-p
         (zorg--initialize-saved-fractions)
@@ -972,13 +1075,53 @@ calling buffer (side window)."
         (zorg--setup-layout)))))
 
 (defun zorg--get-ai-window ()
-  "Get the AI side window based on zorg-ai-side configuration."
+  "Get the AI side window based on zorg-ai-side configuration.
+Returns either the left or right window depending on user preference."
   (if (eq zorg-ai-side 'left)
       zorg--left-window
     zorg--right-window))
 
+(defun zorg--ai-cli-process-running-p ()
+  "Check if the AI CLI process is running in the *zorg-agent* buffer.
+Returns t if the process is alive and running, nil otherwise."
+  (let ((buf (get-buffer "*zorg-agent*")))
+    (and buf
+         (buffer-live-p buf)
+         (with-current-buffer buf
+           (let ((proc (get-buffer-process buf)))
+             (and proc (process-live-p proc)))))))
+
+(defun zorg--start-ai-cli ()
+  "Start the AI CLI in the *zorg-agent* buffer.
+Uses the command specified in `zorg-ai-cli-command` and sets the working directory
+to the project root."
+  ;; Kill existing buffer if it exists to ensure clean start
+  (when (get-buffer "*zorg-agent*")
+    (kill-buffer "*zorg-agent*"))
+  ;; Create vterm buffer and ensure it opens in current window (the AI side panel)
+  (let* ((project-root (zorg--project-root))
+         (default-directory project-root)
+         (buf (get-buffer-create "*zorg-agent*")))
+    ;; Switch to the buffer in current window (should be AI side panel)
+    (switch-to-buffer buf)
+    ;; Initialize vterm in this buffer
+    (vterm-mode)
+    ;; Send the CLI command
+    (vterm-send-string zorg-ai-cli-command)
+    (vterm-send-return)))
+
+(defun zorg-set-ai-cli-command (command)
+  "Set the AI CLI command interactively.
+COMMAND is the shell command to run for the AI CLI (e.g., 'copilot', 'aider', 'cursor')."
+  (interactive "sAI CLI command: ")
+  (setq zorg-ai-cli-command command)
+  (customize-save-variable 'zorg-ai-cli-command command)
+  (message "AI CLI command set to: %s" command))
+
 (defun zorg-ai-gptel ()
-  "Toggle gptel in the configured AI side panel, preserving panel state."
+  "Toggle gptel in the configured AI side panel, preserving panel state.
+Activates gptel if no AI tool is active, switches to gptel if another AI tool
+is active, or restores previous panel state if gptel is already active."
   (interactive)
   (unless zorg--active-p
     (user-error "Zorg mode is not active"))
@@ -989,7 +1132,7 @@ calling buffer (side window)."
     (zorg--restore-ai-state))
 
    ;; If another AI tool is active, switch to gptel
-   ((eq zorg--ai-state 'copilot)
+   ((eq zorg--ai-state 'agent)
     (zorg--ensure-ai-panel)
     (when (window-live-p (zorg--get-ai-window))
       (with-selected-window (zorg--get-ai-window)
@@ -1005,58 +1148,61 @@ calling buffer (side window)."
         (switch-to-buffer (gptel "*zorg-gptel*"))))
     (setq zorg--ai-state 'gptel))))
 
-(defun zorg-ai-copilot ()
-  "Toggle copilot CLI in the configured AI side panel via vterm, preserving panel state."
+(defun zorg-ai-agent ()
+  "Toggle AI agent CLI in the configured AI side panel via vterm, preserving panel state.
+Starts the CLI specified in `zorg-ai-cli-command` in a vterm session within the AI 
+side panel. Manages session persistence and automatically sets up the working 
+directory to the project root. If `zorg-ai-cli-restart-if-not-running` is t, 
+will restart the CLI process if it has exited."
   (interactive)
   (unless zorg--active-p
     (user-error "Zorg mode is not active"))
   
   (cond
-   ;; If copilot is already active, restore previous state
-   ((eq zorg--ai-state 'copilot)
+   ;; If agent is already active, restore previous state
+   ((eq zorg--ai-state 'agent)
     (zorg--restore-ai-state))
    
-   ;; If another AI tool is active, switch to copilot
+   ;; If another AI tool is active, switch to agent
    ((eq zorg--ai-state 'gptel)
     (zorg--ensure-ai-panel)
     (when (window-live-p (zorg--get-ai-window))
       (with-selected-window (zorg--get-ai-window)
-        ;; Just switch to existing copilot buffer or create new one without running commands
-        (if (get-buffer "*zorg-copilot*")
-            (switch-to-buffer "*zorg-copilot*")
-          (progn
-            (vterm "*zorg-copilot*")
-            ;; Only run copilot if this is a new buffer
-            (let ((project-root (zorg--project-root)))
-              (vterm-send-string (format "cd %s" (shell-quote-argument project-root)))
-              (vterm-send-return)
-              (vterm-send-string "copilot")
-              (vterm-send-return))))))
-    (setq zorg--ai-state 'copilot))
+        ;; Check if we should just switch to existing buffer or restart
+        ;; Switch to existing buffer if:
+        ;; - Buffer exists AND
+        ;; - (restart is disabled OR process is still running)
+        ;; Otherwise, start/restart the AI CLI
+        (if (and (get-buffer "*zorg-agent*")
+                 (or (not zorg-ai-cli-restart-if-not-running)
+                     (zorg--ai-cli-process-running-p)))
+            (switch-to-buffer "*zorg-agent*")
+          (zorg--start-ai-cli))))
+    (setq zorg--ai-state 'agent))
    
-   ;; If no AI tool is active, activate copilot
+   ;; If no AI tool is active, activate agent
    (t
     (zorg--save-ai-state)
     (zorg--ensure-ai-panel)
     (when (window-live-p (zorg--get-ai-window))
       (with-selected-window (zorg--get-ai-window)
-        ;; Check if copilot buffer already exists and has copilot running
-        (if (and (get-buffer "*zorg-copilot*")
-                 (with-current-buffer "*zorg-copilot*"
-                   ;; Check if vterm process is alive and buffer has content
-                   (and (get-buffer-process (current-buffer))
-                        (> (buffer-size) 0))))
-            ;; Just switch to existing buffer - don't run commands
-            (switch-to-buffer "*zorg-copilot*")
-          ;; Create new buffer and run copilot
-          (progn
-            (vterm "*zorg-copilot*")
-            (let ((project-root (zorg--project-root)))
-              (vterm-send-string (format "cd %s" (shell-quote-argument project-root)))
-              (vterm-send-return)
-              (vterm-send-string "copilot")
-              (vterm-send-return))))))
-    (setq zorg--ai-state 'copilot))))
+        ;; Check if we should just switch to existing buffer or restart
+        ;; Switch to existing buffer if:
+        ;; - Buffer exists AND
+        ;; - (restart is disabled OR process is still running)
+        ;; Otherwise, start/restart the AI CLI
+        (if (and (get-buffer "*zorg-agent*")
+                 (or (not zorg-ai-cli-restart-if-not-running)
+                     (zorg--ai-cli-process-running-p)))
+            ;; Just switch to existing buffer
+            (switch-to-buffer "*zorg-agent*")
+          ;; Start/restart the AI CLI
+          (zorg--start-ai-cli))))
+    (setq zorg--ai-state 'agent))))
+
+;; Compatibility alias for existing users
+(defalias 'zorg-ai-copilot 'zorg-ai-agent
+  "Compatibility alias for zorg-ai-agent. Use zorg-ai-agent instead.")
 
 (provide 'zorg)
 

@@ -1,6 +1,29 @@
 * Changelog
 
-** Mon Sep 29 2025
+** [Mon Sep 30 2025] - AI Agent Refactoring
+
+*** Added
+- Configurable AI CLI command: New `zorg-ai-cli-command` variable (default: "copilot") allows any AI CLI tool
+- WIP (see  [[Known Bug]]) Auto-restart functionality: New `zorg-ai-cli-restart-if-not-running` variable (default: t) automatically restarts dead processes
+- Interactive configuration: New `zorg-set-ai-cli-command` function for easy AI CLI setup
+- Process management: Intelligent detection of whether AI CLI processes are running vs. dead
+- Enhanced documentation: Updated README with comprehensive AI agent configuration examples
+
+*** Changed
+- Function naming: `zorg-ai-copilot` renamed to `zorg-ai-agent` for generic terminology
+- Buffer naming: AI CLI now uses `*zorg-agent*` instead of `*zorg-copilot*` 
+- State management: AI state variables updated to use 'agent instead of 'copilot
+- Generic terminology: All documentation and comments updated to use "agent" instead of "copilot"
+
+*** Backward Compatibility
+- Compatibility alias: `zorg-ai-copilot` still works as an alias to `zorg-ai-agent`
+- Default behavior: "copilot" remains the default command for existing users
+- Configuration preservation: All existing customizations continue to work
+
+*** Known Bug
+- right now if you manually exit out of the agent cli, re-toggling the agent via zorg-ai-agent will simply open the buffer but not actually restart the process. You will either need to manually call the cli at this point yourself, or delete the buffer completely and then re-toggle.
+
+** [Mon Sep 29 2025] - Start AI Integration and Better Side Panel Handling
 
 *** Fixed
 - Percentage-based saving: `zorg-save-fractions` now properly captures and saves actual percentage values from current window widths instead of incorrect column values
