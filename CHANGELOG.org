@@ -1,5 +1,10 @@
 * Changelog
 
+** [Wed Oct  1 2025] - Side Buffer Restoration Fix
+
+*** Fixed
+- Side buffer restoration: Zorg now restores the exact buffers to the correct side windows after toggling zorg-mode, without creating new splits or extra windows. This fixes the bug where toggling zorg-mode would create a new split and place the buffer incorrectly, instead of restoring it to its previous side.
+
 ** [Mon Sep 30 2025] - AI Agent Refactoring
 
 *** Added

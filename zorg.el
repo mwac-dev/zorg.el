@@ -36,9 +36,94 @@
 (require 'org)
 (require 'subr-x)
 
-(defgroup zorg nil
-  "Zen + Org project notes with side panels."
-  :group 'convenience)
+;; --- Persistence of side panel buffers across zorg-mode toggles ---
+(defvar zorg--persist-left-buffer nil
+  "Buffer that was in the left panel before toggling zorg-mode off.")
+(defvar zorg--persist-right-buffer nil
+  "Buffer that was in the right panel before toggling zorg-mode off.")
+(defvar zorg--persist-main-buffer nil
+  "Buffer that was in the main window before toggling zorg-mode off.")
+
+(defvar zorg--persist-left-point nil
+  "Point in the left buffer before toggling zorg-mode off.")
+(defvar zorg--persist-right-point nil
+  "Point in the right buffer before toggling zorg-mode off.")
+(defvar zorg--persist-main-point nil
+  "Point in the main buffer before toggling zorg-mode off.")
+
+(defvar zorg--persist-left-file nil
+  "File visited in the left panel before toggling zorg-mode off.")
+(defvar zorg--persist-right-file nil
+  "File visited in the right panel before toggling zorg-mode off.")
+(defvar zorg--persist-main-file nil
+  "File visited in the main window before toggling zorg-mode off.")
+
+(defun zorg--save-side-buffers ()
+  "Save the buffers and points in left, right, and main windows for persistence."
+  (setq zorg--persist-left-buffer
+        (when (and (window-live-p zorg--left-window)
+                   (window-buffer zorg--left-window))
+          (window-buffer zorg--left-window)))
+  (setq zorg--persist-right-buffer
+        (when (and (window-live-p zorg--right-window)
+                   (window-buffer zorg--right-window))
+          (window-buffer zorg--right-window)))
+  (setq zorg--persist-main-buffer
+        (when (zorg--main-window)
+          (window-buffer (zorg--main-window))))
+  (setq zorg--persist-left-point
+        (when (and (window-live-p zorg--left-window)
+                   (window-buffer zorg--left-window))
+          (with-current-buffer (window-buffer zorg--left-window) (point))))
+  (setq zorg--persist-right-point
+        (when (and (window-live-p zorg--right-window)
+                   (window-buffer zorg--right-window))
+          (with-current-buffer (window-buffer zorg--right-window) (point))))
+  (setq zorg--persist-main-point
+        (when (zorg--main-window)
+          (with-current-buffer (window-buffer (zorg--main-window)) (point))))
+  (setq zorg--persist-left-file
+        (when (and (window-live-p zorg--left-window)
+                   (window-buffer zorg--left-window))
+          (buffer-file-name (window-buffer zorg--left-window))))
+  (setq zorg--persist-right-file
+        (when (and (window-live-p zorg--right-window)
+                   (window-buffer zorg--right-window))
+          (buffer-file-name (window-buffer zorg--right-window))))
+  (setq zorg--persist-main-file
+        (when (zorg--main-window)
+          (buffer-file-name (window-buffer (zorg--main-window))))))
+
+(defun zorg--restore-side-buffers ()
+  "Restore the buffers and points in left, right, and main windows after toggling zorg-mode on."
+  (when (and zorg--left-enabled-p (window-live-p zorg--left-window))
+    (when zorg--persist-left-buffer
+      (set-window-buffer zorg--left-window zorg--persist-left-buffer)
+      (with-current-buffer zorg--persist-left-buffer
+        (when zorg--persist-left-point
+          (goto-char (min zorg--persist-left-point (point-max)))))))
+  (when (and zorg--right-enabled-p (window-live-p zorg--right-window))
+    (when zorg--persist-right-buffer
+      (set-window-buffer zorg--right-window zorg--persist-right-buffer)
+      (with-current-buffer zorg--persist-right-buffer
+        (when zorg--persist-right-point
+          (goto-char (min zorg--persist-right-point (point-max)))))))
+  (when (zorg--main-window)
+    (when zorg--persist-main-buffer
+      (set-window-buffer (zorg--main-window) zorg--persist-main-buffer)
+      (with-current-buffer zorg--persist-main-buffer
+        (when zorg--persist-main-point
+          (goto-char (min zorg--persist-main-point (point-max)))))))
+  ;; Clear persistence vars after restore
+  (setq zorg--persist-left-buffer nil
+        zorg--persist-right-buffer nil
+        zorg--persist-main-buffer nil
+        zorg--persist-left-point nil
+        zorg--persist-right-point nil
+        zorg--persist-main-point nil
+        zorg--persist-left-file nil
+        zorg--persist-right-file nil
+        zorg--persist-main-file nil))
 
 (defcustom zorg-notes-dir ".zorg-notes"
   "Directory (relative to project root) where Zorg notes are stored."
@@ -777,11 +862,13 @@ proper window parameters are set for Zorg's window management."
 
 ;;;###autoload
 (defun zorg-mode ()
-  "Toggle Zorg mode: center buffer with side panels."
+  "Toggle Zorg mode: center buffer with side panels, preserving side panel buffers."
   (interactive)
   (if zorg--active-p
       ;; --- turn off
       (progn
+        ;; Save side panel buffers and points for persistence
+        (zorg--save-side-buffers)
         ;; Capture current fractions before turning off
         (zorg--capture-fractions)
         (let ((main-buf (zorg--main-buffer)))
@@ -803,6 +890,7 @@ proper window parameters are set for Zorg's window management."
       (setq zorg--saved-config (current-window-configuration)
             zorg--active-p t)
       (zorg--setup-layout)
+      (zorg--restore-side-buffers)
       (message "Zorg mode on"))))
 
 
